@@ -2,11 +2,30 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'git_service.dart';
 import 'repo_page.dart';
+import 'ui/app_theme.dart';
+import 'ui/window_controls.dart';
+import 'utils/platform_utils.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (isDesktop) {
+    await windowManager.ensureInitialized();
+    const windowOptions = WindowOptions(
+      size: Size(1200, 800),
+      minimumSize: Size(1024, 640),
+      center: true,
+      titleBarStyle: TitleBarStyle.hidden,
+      backgroundColor: Colors.transparent,
+    );
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
   runApp(const MyApp());
 }
 
@@ -17,10 +36,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'EasyGit - Simple',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.dark,
       home: const MyHomePage(title: 'EasyGit - Repo Manager'),
     );
   }
@@ -186,13 +202,31 @@ class _MyHomePageState extends State<MyHomePage> {
         : _repos.where((r) => r.toLowerCase().contains(query) || r.split(Platform.pathSeparator).last.toLowerCase().contains(query)).toList();
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        automaticallyImplyLeading: false,
+        titleSpacing: 0,
+        title: isDesktop
+            ? Row(
+                children: [
+                  Expanded(
+                    child: DragToMoveArea(
+                      child: Container(
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(widget.title),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : Text(widget.title),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: '添加仓库',
             onPressed: _busy ? null : _showAddRepoDialog,
           ),
+          if (isDesktop) const SizedBox(width: 8),
+          if (isDesktop) const WindowControls(),
         ],
       ),
       body: Padding(
