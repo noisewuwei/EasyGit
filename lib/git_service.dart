@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 class GitChange {
@@ -14,9 +15,29 @@ class GitChange {
   });
 }
 
+class GitCommit {
+  final String hash;
+  final String author;
+  final String date;
+  final String message;
+
+  GitCommit({
+    required this.hash,
+    required this.author,
+    required this.date,
+    required this.message,
+  });
+}
+
 class GitService {
   Future<ProcessResult> _run(List<String> args, String workingDir) async {
-    return await Process.run('git', args, workingDirectory: workingDir);
+    return await Process.run(
+      'git',
+      args,
+      workingDirectory: workingDir,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
   }
 
   Future<String> runGit(List<String> args, String workingDir) async {
@@ -127,5 +148,54 @@ class GitService {
     final result = await _run(['remote'], repoPath);
     final out = result.stdout.toString();
     return out.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  }
+
+  Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20}) async {
+    final format = '%h%x09%an%x09%ad%x09%s';
+    final result = await _run(['log', '-n', '$limit', '--date=short', '--pretty=format:$format'], repoPath);
+    if (result.exitCode != 0) {
+      return [];
+    }
+    final lines = result.stdout.toString().split('\n').where((l) => l.trim().isNotEmpty);
+    final commits = <GitCommit>[];
+    for (final line in lines) {
+      final parts = line.split('\t');
+      if (parts.length < 4) continue;
+      commits.add(GitCommit(
+        hash: parts[0],
+        author: parts[1],
+        date: parts[2],
+        message: parts.sublist(3).join('\t'),
+      ));
+    }
+    return commits;
+  }
+
+  Future<String> diffFile(String repoPath, GitChange change) async {
+    final args = <String>['diff'];
+    if (change.staged) {
+      args.add('--cached');
+    }
+    args.addAll(['--', change.path]);
+    final result = await _run(args, repoPath);
+    final stdout = result.stdout.toString();
+    final stderr = result.stderr.toString();
+    if (result.exitCode != 0 && stdout.trim().isEmpty) {
+      return 'Failed to load diff for ${change.path}:\n$stderr';
+    }
+    if (stdout.trim().isEmpty) {
+      return 'No diff to display for ${change.path}.';
+    }
+    return stdout;
+  }
+
+  Future<String> showCommit(String repoPath, String hash) async {
+    final result = await _run(['show', '--stat', '--patch', '--color=never', hash], repoPath);
+    final stdout = result.stdout.toString();
+    final stderr = result.stderr.toString();
+    if (result.exitCode != 0 && stdout.trim().isEmpty) {
+      return 'Failed to load commit $hash:\n$stderr';
+    }
+    return stdout.trim().isEmpty ? stderr : stdout;
   }
 }

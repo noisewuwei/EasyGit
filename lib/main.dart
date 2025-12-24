@@ -15,8 +15,8 @@ Future<void> main() async {
   if (isDesktop) {
     await windowManager.ensureInitialized();
     const windowOptions = WindowOptions(
-      size: Size(1200, 800),
-      minimumSize: Size(1024, 640),
+      size: Size(1400, 900),
+      minimumSize: Size(1400, 900),
       center: true,
       titleBarStyle: TitleBarStyle.hidden,
       backgroundColor: Colors.transparent,
@@ -93,28 +93,28 @@ class _MyHomePageState extends State<MyHomePage> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('添加仓库'),
+          title: const Text('Add Repository'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('本地仓库'),
+                  const Text('Local Repositories'),
                   TextField(
                     controller: _repoController,
-                    decoration: const InputDecoration(hintText: '本地路径 如 C\\path\\to\\repo'),
+                    decoration: const InputDecoration(hintText: 'Local path, e.g. C\\path\\to\\repo'),
                   ),
                   const SizedBox(height: 8),
                   Row(children: [
-                    ElevatedButton(onPressed: _addLocalRepo, child: const Text('添加本地')),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                        onPressed: () {
-                          final cwd = Directory.current.path;
-                          _repoController.text = cwd;
-                        },
-                        child: const Text('使用当前目录')),
+                    ElevatedButton(onPressed: _addLocalRepo, child: const Text('Add Local')),
+                    // const SizedBox(width: 8),
+                    // ElevatedButton(
+                    //     onPressed: () {
+                    //       final cwd = Directory.current.path;
+                    //       _repoController.text = cwd;
+                    //     },
+                    //     child: const Text('Use Current Directory')),
                     const SizedBox(width: 8),
                     ElevatedButton(
                         onPressed: () async {
@@ -123,20 +123,20 @@ class _MyHomePageState extends State<MyHomePage> {
                             _repoController.text = dirPath;
                           }
                         },
-                        child: const Text('浏览...')),
+                        child: const Text('Browse...')),
                   ]),
                   const Divider(height: 24),
-                  const Text('克隆远程仓库'),
-                  TextField(controller: _remoteUrlController, decoration: const InputDecoration(hintText: '远程 URL')), 
+                  const Text('Clone Remote Repository'),
+                  TextField(controller: _remoteUrlController, decoration: const InputDecoration(hintText: 'Remote URL')), 
                   const SizedBox(height: 8),
-                  TextField(controller: _cloneTargetController, decoration: const InputDecoration(hintText: '目标父目录')), 
+                  TextField(controller: _cloneTargetController, decoration: const InputDecoration(hintText: 'Target Parent Directory')), 
                   const SizedBox(height: 8),
-                  ElevatedButton(onPressed: _cloneRemoteRepo, child: const Text('克隆')),
+                  ElevatedButton(onPressed: _cloneRemoteRepo, child: const Text('Clone Repository')),
                 ],
               ),
             ),
           ),
-          actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('关闭'))],
+          actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close'))],
         );
       },
     );
@@ -220,11 +220,11 @@ class _MyHomePageState extends State<MyHomePage> {
               )
             : Text(widget.title),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: '添加仓库',
-            onPressed: _busy ? null : _showAddRepoDialog,
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.add),
+          //   tooltip: '添加仓库',
+          //   onPressed: _busy ? null : _showAddRepoDialog,
+          // ),
           if (isDesktop) const SizedBox(width: 8),
           if (isDesktop) const WindowControls(),
         ],
@@ -234,18 +234,18 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('本地仓库', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const Text('Local Repositories', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Row(children: [
               Expanded(
                 child: TextField(
                   controller: _searchController,
                   onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: '搜索'),
+                  decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search'),
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton(onPressed: _busy ? null : _showAddRepoDialog, child: const Text('添加仓库')),
+              ElevatedButton(onPressed: _busy ? null : _showAddRepoDialog, child: const Text('Add Repository')),
             ]),
             const SizedBox(height: 12),
             Expanded(
@@ -263,10 +263,10 @@ class _MyHomePageState extends State<MyHomePage> {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        ElevatedButton(onPressed: () => _openRepo(path), child: const Text('打开')),
+                        ElevatedButton(onPressed: () => _openRepo(path), child: const Text('Open')),
                         const SizedBox(width: 8),
                         IconButton(
-                          tooltip: '移除',
+                          tooltip: 'Remove',
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () async {
                             setState(() {

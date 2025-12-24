@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -18,26 +19,45 @@ class RepoPage extends StatefulWidget {
 class _RepoPageState extends State<RepoPage> {
   final _git = GitService();
   final _messageController = TextEditingController();
+  final _diffScrollController = ScrollController();
+
   bool _busy = false;
   String _log = '';
 
   List<GitChange> _changes = [];
   List<String> _branches = [];
-  String? _currentBranch;
   List<String> _remotes = [];
+  String? _currentBranch;
   String? _selectedRemote;
 
-  void _appendLog(String text) {
-    final time = DateTime.now().toIso8601String().split('T').last.split('.').first;
-    setState(() {
-      _log = '[$time] $text\n' + _log;
-    });
-  }
+  GitChange? _selectedChange;
+  bool _diffLoading = false;
+  String? _diffText;
+
+  List<GitCommit> _recentCommits = [];
+  bool _commitOverlay = false;
+  GitCommit? _selectedCommit;
+  bool _commitDetailsLoading = false;
+  String? _commitDetailsText;
 
   @override
   void initState() {
     super.initState();
     _refreshAll();
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _diffScrollController.dispose();
+    super.dispose();
+  }
+
+  void _appendLog(String text) {
+    final time = DateTime.now().toIso8601String().split('T').last.split('.').first;
+    setState(() {
+      _log = '[$time] $text\n\n$_log';
+    });
   }
 
   Future<void> _refreshAll() async {
@@ -48,16 +68,42 @@ class _RepoPageState extends State<RepoPage> {
       final branches = await _git.branches(path);
       final current = await _git.currentBranch(path);
       final remotes = await _git.remotes(path);
+      final history = await _git.recentCommits(path);
+
+      final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
+
       if (!mounted) return;
+      final prevSelectedCommit = _selectedCommit;
       setState(() {
         _changes = changes;
         _branches = branches;
         _currentBranch = current;
         _remotes = remotes;
+        _recentCommits = history;
         if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
           _selectedRemote = _remotes.first;
         }
+        if (nextSelection == null) {
+          _selectedChange = null;
+          _diffText = null;
+          _diffLoading = false;
+        } else {
+          _selectedChange = nextSelection;
+        }
+        if (prevSelectedCommit != null) {
+          final match = history.where((c) => c.hash == prevSelectedCommit.hash).toList();
+          if (match.isNotEmpty) {
+            _selectedCommit = match.first;
+          } else {
+            _selectedCommit = null;
+            _commitDetailsText = null;
+          }
+        }
       });
+
+      if (nextSelection != null) {
+        await _previewChange(nextSelection, force: true);
+      }
     } catch (e) {
       _appendLog('Refresh failed: $e');
     }
@@ -99,6 +145,8 @@ class _RepoPageState extends State<RepoPage> {
   Future<void> _push() => _runGitOp(() => _git.push(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
   Future<void> _checkout(String branch) => _runGitOp(() => _git.checkout(widget.repoPath, branch));
 
+  void _toggleCommitOverlay() => setState(() => _commitOverlay = !_commitOverlay);
+
   @override
   Widget build(BuildContext context) {
     final repoName = widget.repoPath.split(Platform.pathSeparator).last;
@@ -113,7 +161,7 @@ class _RepoPageState extends State<RepoPage> {
         leading: canPop
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
-                tooltip: '返回',
+                tooltip: 'Back',
                 onPressed: () => Navigator.of(context).maybePop(),
               )
             : null,
@@ -134,7 +182,6 @@ class _RepoPageState extends State<RepoPage> {
               )
             : Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         backgroundColor: AppColors.panel,
-        centerTitle: false,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: AppColors.border),
@@ -155,32 +202,70 @@ class _RepoPageState extends State<RepoPage> {
             child: Column(
               children: [
                 _buildToolbar(),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Expanded(child: _buildFileGroup('Unstaged Changes', unstaged, false)),
-                      Container(width: 1, color: AppColors.border),
-                      Expanded(child: _buildFileGroup('Staged Changes', staged, true)),
-                    ],
+                if (_commitOverlay) ...[
+                  SizedBox(height: 180, child: _buildCommitHistoryPanel()),
+                  Expanded(child: _buildChangesAndDiff(unstaged, staged)),
+                  Container(height: 1, color: AppColors.border),
+                  SizedBox(
+                    height: 220,
+                    child: Row(
+                      children: [
+                        Expanded(flex: 2, child: _buildCommitPanel()),
+                        Container(width: 1, color: AppColors.border),
+                        Expanded(flex: 3, child: _buildLogPanel()),
+                      ],
+                    ),
                   ),
-                ),
-                Container(height: 1, color: AppColors.border),
-                SizedBox(
-                  height: 220,
-                  child: Row(
-                    children: [
-                      Expanded(flex: 2, child: _buildCommitPanel()),
-                      Container(width: 1, color: AppColors.border),
-                      Expanded(flex: 3, child: _buildLogPanel()),
-                    ],
-                  ),
-                ),
+                ] else ...[
+                  Expanded(child: _buildCommitHistoryPanel(showDetails: true)),
+                ],
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  GitChange? _matchChange(List<GitChange> list, GitChange? target) {
+    if (target == null) return null;
+    GitChange? fallback;
+    for (final change in list) {
+      if (change.path != target.path) continue;
+      if (change.staged == target.staged) {
+        return change;
+      }
+      fallback ??= change;
+    }
+    return fallback;
+  }
+
+  Future<void> _previewChange(GitChange change, {bool force = false}) async {
+    final sameSelection = _selectedChange != null &&
+        _selectedChange!.path == change.path &&
+        _selectedChange!.staged == change.staged;
+    if (!force && sameSelection && _diffText != null && !_diffLoading) {
+      return;
+    }
+    setState(() {
+      _selectedChange = change;
+      _diffLoading = true;
+      _diffText = null;
+    });
+    try {
+      final diff = await _git.diffFile(widget.repoPath, change);
+      if (!mounted) return;
+      setState(() {
+        _diffLoading = false;
+        _diffText = diff;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _diffLoading = false;
+        _diffText = 'Failed to load diff: $e';
+      });
+    }
   }
 
   Widget _buildSidebar() {
@@ -263,6 +348,8 @@ class _RepoPageState extends State<RepoPage> {
           const SizedBox(width: 8),
           _buildActionButton('Push', Icons.arrow_upward, _push),
           const SizedBox(width: 8),
+          _buildActionButton(_commitOverlay ? 'Done' : 'Add', _commitOverlay ? Icons.check : Icons.add, _toggleCommitOverlay),
+          const SizedBox(width: 8),
           IconButton(
             onPressed: _busy ? null : _refreshAll,
             icon: const Icon(Icons.refresh, size: 18),
@@ -271,6 +358,163 @@ class _RepoPageState extends State<RepoPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildCommitHistoryPanel({bool showDetails = false}) {
+    final historyList = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: const BoxDecoration(
+            color: AppColors.panel,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              const Text(
+                'RECENT COMMITS',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
+              ),
+              const SizedBox(width: 12),
+              Text(_currentBranch ?? '-', style: const TextStyle(fontWeight: FontWeight.w600)),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Refresh history',
+                icon: const Icon(Icons.refresh, size: 16),
+                onPressed: _busy ? null : _refreshAll,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Container(
+            color: AppColors.background,
+            child: _recentCommits.isEmpty
+                ? const Center(child: Text('No commits found.', style: TextStyle(color: AppColors.textMuted)))
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    itemCount: _recentCommits.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final commit = _recentCommits[index];
+                      final isSelected = showDetails && _selectedCommit?.hash == commit.hash;
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(commit.message, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text('${commit.hash} · ${commit.author} · ${commit.date}', style: const TextStyle(color: AppColors.textMuted)),
+                        dense: true,
+                        selected: isSelected,
+                        selectedTileColor: AppColors.panel,
+                        onTap: showDetails ? () => _loadCommitDetails(commit) : null,
+                      );
+                    },
+                  ),
+          ),
+        ),
+      ],
+    );
+
+    if (!showDetails) {
+      return historyList;
+    }
+
+    return Row(
+      children: [
+        Expanded(flex: 3, child: historyList),
+        Container(width: 1, color: AppColors.border),
+        Expanded(flex: 4, child: _buildCommitDetailPanel()),
+      ],
+    );
+  }
+
+  Widget _buildChangesAndDiff(List<GitChange> unstaged, List<GitChange> staged) {
+    return Row(
+      children: [
+        Expanded(flex: 5, child: _buildChangeColumns(unstaged, staged)),
+        Container(width: 1, color: AppColors.border),
+        Expanded(flex: 4, child: _buildDiffPanel()),
+      ],
+    );
+  }
+
+  Widget _buildChangeColumns(List<GitChange> unstaged, List<GitChange> staged) {
+    return Row(
+      children: [
+        Expanded(child: _buildFileGroup('Unstaged Changes', unstaged, false)),
+        Container(width: 1, color: AppColors.border),
+        Expanded(child: _buildFileGroup('Staged Changes', staged, true)),
+      ],
+    );
+  }
+
+  Widget _buildDiffPanel() {
+    final fileName = _selectedChange?.path ?? 'Select a file to preview';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: const BoxDecoration(
+            color: AppColors.panel,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'DIFF PREVIEW',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
+              ),
+              const SizedBox(height: 4),
+              Text(fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Container(
+            color: Colors.black,
+            child: _diffLoading
+                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _diffText == null
+                    ? const Center(child: Text('Select a file from the list to view its diff.', style: TextStyle(color: AppColors.textMuted)))
+                    : Scrollbar(
+                        controller: _diffScrollController,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: _diffScrollController,
+                          padding: const EdgeInsets.all(12),
+                          child: SelectableText.rich(TextSpan(children: _buildDiffSpans(_diffText!))),
+                        ),
+                      ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<TextSpan> _buildDiffSpans(String diff) {
+    final lines = diff.split('\n');
+    return lines
+        .map(
+          (line) => TextSpan(
+            text: '$line\n',
+            style: TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 12,
+              color: _diffColorForLine(line),
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  Color _diffColorForLine(String line) {
+    if (line.startsWith('@@')) return AppColors.accent;
+    if (line.startsWith('+') && !line.startsWith('+++')) return AppColors.success;
+    if (line.startsWith('-') && !line.startsWith('---')) return AppColors.danger;
+    if (line.startsWith('+++') || line.startsWith('---')) return AppColors.textSecondary;
+    return AppColors.textPrimary;
   }
 
   Widget _buildCommitPanel() {
@@ -392,14 +636,15 @@ class _RepoPageState extends State<RepoPage> {
         ),
         Expanded(
           child: files.isEmpty
-              ? const Center(
-                  child: Text('No files', style: TextStyle(color: AppColors.textMuted)),
-                )
+              ? const Center(child: Text('No files', style: TextStyle(color: AppColors.textMuted)))
               : ListView.separated(
                   itemCount: files.length,
                   separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                   itemBuilder: (context, index) {
                     final file = files[index];
+                    final isSelected = _selectedChange != null &&
+                        _selectedChange!.path == file.path &&
+                        _selectedChange!.staged == file.staged;
                     return ListTile(
                       dense: true,
                       visualDensity: VisualDensity.compact,
@@ -409,7 +654,10 @@ class _RepoPageState extends State<RepoPage> {
                         color: isStaged ? AppColors.success : AppColors.warning,
                       ),
                       title: Text(file.path, style: const TextStyle(fontSize: 13)),
-                      subtitle: Text(isStaged ? 'IDX: ${file.indexStatus}' : 'WT: ${file.workTreeStatus}', style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                      subtitle: Text(
+                        isStaged ? 'IDX: ${file.indexStatus}' : 'WT: ${file.workTreeStatus}',
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                      ),
                       trailing: IconButton(
                         icon: Icon(isStaged ? Icons.remove : Icons.add, size: 16),
                         tooltip: isStaged ? 'Unstage' : 'Stage',
@@ -419,9 +667,84 @@ class _RepoPageState extends State<RepoPage> {
                                 ? _unstage(file)
                                 : _stage(file),
                       ),
+                      selected: isSelected,
+                      selectedTileColor: AppColors.panel,
+                      onTap: () => _previewChange(file),
                     );
                   },
                 ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _loadCommitDetails(GitCommit commit) async {
+    setState(() {
+      _selectedCommit = commit;
+      _commitDetailsLoading = true;
+      _commitDetailsText = null;
+    });
+    try {
+      final details = await _git.showCommit(widget.repoPath, commit.hash);
+      if (!mounted) return;
+      setState(() {
+        _commitDetailsLoading = false;
+        _commitDetailsText = details;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _commitDetailsLoading = false;
+        _commitDetailsText = 'Failed to load commit: $e';
+      });
+    }
+  }
+
+  Widget _buildCommitDetailPanel() {
+    if (_selectedCommit == null) {
+      return Container(
+        color: AppColors.background,
+        alignment: Alignment.center,
+        child: const Text('Select a commit to view details.', style: TextStyle(color: AppColors.textMuted)),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: AppColors.panel,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_selectedCommit!.message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('${_selectedCommit!.hash} · ${_selectedCommit!.author} · ${_selectedCommit!.date}', style: const TextStyle(color: AppColors.textMuted)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Container(
+            color: Colors.black,
+            child: _commitDetailsLoading
+                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _commitDetailsText == null
+                    ? const Center(child: Text('No details loaded.', style: TextStyle(color: AppColors.textMuted)))
+                    : Scrollbar(
+                        controller: _diffScrollController,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: _diffScrollController,
+                          padding: const EdgeInsets.all(12),
+                          child: SelectableText.rich(
+                            TextSpan(children: _buildDiffSpans(_commitDetailsText!)),
+                          ),
+                        ),
+                      ),
+          ),
         ),
       ],
     );
