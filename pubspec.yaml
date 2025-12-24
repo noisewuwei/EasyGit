@@ -38,6 +38,7 @@ dependencies:
   file_picker: ^8.0.0+1
   shared_preferences: ^2.2.3
   window_manager: ^0.3.8
+  flutter_launcher_icons: ^0.13.1
 
 dev_dependencies:
   flutter_test:
@@ -91,3 +92,16 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
+
+
+flutter_launcher_icons:
+  windows:
+    generate: true
+    image_path: "icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "icon.png"
+  linux:
+    generate: true
+    image_path: "icon.png"
