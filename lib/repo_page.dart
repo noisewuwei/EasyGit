@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -20,9 +21,22 @@ class _RepoPageState extends State<RepoPage> {
   final _git = GitService();
   final _messageController = TextEditingController();
   final _diffScrollController = ScrollController();
+  static const List<String> _commitTypes = [
+    'init',
+    'feature',
+    'fix',
+    'refactor',
+    'log',
+    'perf',
+    'test',
+    'style',
+    'upsub',
+  ];
 
   bool _busy = false;
   String _log = '';
+  bool _generatingCommitInfo = false;
+  String _selectedCommitType = 'feature';
 
   List<GitChange> _changes = [];
   List<String> _branches = [];
@@ -614,6 +628,39 @@ class _RepoPageState extends State<RepoPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Row(
+            children: [
+              const Text('Type', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedCommitType,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Commit type',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: _commitTypes
+                      .map(
+                        (t) => DropdownMenuItem<String>(
+                          value: t,
+                          child: Text(t),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (_busy || _generatingCommitInfo)
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() => _selectedCommitType = value);
+                          }
+                        },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Expanded(
             child: TextField(
               controller: _messageController,
@@ -627,20 +674,194 @@ class _RepoPageState extends State<RepoPage> {
             ),
           ),
           const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: _busy ? null : _commit,
-            icon: const Icon(Icons.check, size: 18),
-            label: const Text('Commit'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: (_busy || _generatingCommitInfo) ? null : _generateCommitInfo,
+                  icon: _generatingCommitInfo
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.bolt, size: 14),
+                  label: const Text('Generate'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: _busy ? null : _commit,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Commit'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 18),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  Future<String?> _getDeepseekApiKey() async {
+    final envKey = Platform.environment['DEEPSEEK_API_KEY'];
+    if (envKey != null && envKey.trim().isNotEmpty) return envKey.trim();
+    try {
+      final f = File('.env');
+      if (!await f.exists()) return null;
+      final contents = await f.readAsLines();
+      for (final line in contents) {
+        final trimmed = line.trim();
+        if (trimmed.startsWith('DEEPSEEK_API_KEY=')) {
+          return trimmed.split('=')[1].trim();
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _callDeepseek(String prompt) async {
+    final key = await _getDeepseekApiKey();
+    if (key == null) {
+      _appendLog('Deepseek API key not found in environment or .env');
+      return null;
+    }
+
+    final uri = Uri.parse('https://api.deepseek.com/chat/completions');
+    try {
+      final httpClient = HttpClient();
+      final req = await httpClient.postUrl(uri);
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set('Authorization', 'Bearer $key');
+      final body = jsonEncode({
+        'model': 'deepseek-chat',
+        'messages': [
+          {'role': 'system', 'content': 'You are a helpful assistant that generates concise commit message in JSON.'},
+          {'role': 'user', 'content': prompt}
+        ],
+        'stream': false,
+      });
+      req.add(utf8.encode(body));
+      final resp = await req.close();
+      final respBody = await resp.transform(utf8.decoder).join();
+      httpClient.close();
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        _appendLog('Deepseek API error: ${resp.statusCode} ${respBody}');
+        return null;
+      }
+      final decoded = jsonDecode(respBody) as Map<String, dynamic>;
+      return decoded;
+    } catch (e) {
+      _appendLog('Deepseek request failed: $e');
+      return null;
+    }
+  }
+
+  Future<void> _generateCommitInfo() async {
+    if (_busy || _generatingCommitInfo) return;
+    setState(() => _generatingCommitInfo = true);
+    try {
+      final staged = _changes.where((c) => c.staged).toList();
+      final source = staged.isNotEmpty ? staged : _changes.where((c) => !c.staged).toList();
+      if (source.isEmpty) {
+        _appendLog('No changes found to generate commit message from.');
+        return;
+      }
+
+      final buffers = <String>[];
+      int totalLen = 0;
+      for (final c in source) {
+        try {
+          final d = await _git.diffFile(widget.repoPath, c);
+          final snippet = d.length > 4000 ? d.substring(0, 4000) + '\n...[truncated]' : d;
+          buffers.add('FILE: ${c.path}\n$snippet');
+          totalLen += snippet.length;
+          if (totalLen > 10000) break;
+        } catch (_) {
+          // ignore single file errors
+        }
+      }
+
+      final prompt = '''Please generate a concise commit message (max 20 chars) based on the following diffs. Return ONLY a JSON object with keys "message".\n\n${buffers.join('\n\n---\n\n')}''';
+
+      _appendLog('Calling Deepseek to generate commit info...');
+      final resp = await _callDeepseek(prompt);
+      if (resp == null) return;
+
+      String? content;
+      if (resp.containsKey('choices') && resp['choices'] is List && resp['choices'].isNotEmpty) {
+        final first = resp['choices'][0];
+        if (first is Map && first.containsKey('message')) {
+          final msg = first['message'];
+          if (msg is Map && msg.containsKey('content')) content = msg['content'] as String?;
+        }
+        content ??= (first is Map && first['text'] is String) ? first['text'] as String : null;
+      }
+      content ??= resp['output']?.toString();
+      if (content == null) {
+        _appendLog('Deepseek returned no usable content.');
+        return;
+      }
+
+      String? aiMessage;
+      try {
+        final j = jsonDecode(content);
+        if (j is Map) {
+          aiMessage = (j['message'] ?? j['title'] ?? j['msg'])?.toString();
+        }
+      } catch (_) {
+        final jsonStart = content.indexOf('{');
+        final jsonEnd = content.lastIndexOf('}');
+        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
+          try {
+            final j = jsonDecode(content.substring(jsonStart, jsonEnd + 1));
+            if (j is Map) {
+              aiMessage = (j['message'] ?? j['title'] ?? j['msg'])?.toString();
+            }
+          } catch (_) {}
+        }
+      }
+
+      String msg = (aiMessage ?? content).trim();
+      msg = msg.replaceAll(RegExp(r'[\r\n]+'), ' ').replaceAll(RegExp(r'\s+'), ' ');
+
+      final prefix = _selectedCommitType.trim();
+      if (prefix.isNotEmpty) {
+        final lower = msg.toLowerCase();
+        for (final t in _commitTypes) {
+          final t1 = '$t:';
+          final t2 = '$t：';
+          if (lower.startsWith(t1) || lower.startsWith(t2)) {
+            final idx1 = msg.indexOf(':');
+            final idx2 = msg.indexOf('：');
+            int cut = -1;
+            if (idx1 == -1) {
+              cut = idx2;
+            } else if (idx2 == -1) {
+              cut = idx1;
+            } else {
+              cut = idx1 < idx2 ? idx1 : idx2;
+            }
+            if (cut != -1) {
+              msg = msg.substring(cut + 1).trimLeft();
+            }
+            break;
+          }
+        }
+        msg = '$prefix: ' + msg;
+      }
+
+      _messageController.text = msg;
+      _appendLog('Inserted AI-generated commit message.');
+    } finally {
+      if (!mounted) return;
+      setState(() => _generatingCommitInfo = false);
+    }
   }
 
   Widget _buildLogPanel() {
