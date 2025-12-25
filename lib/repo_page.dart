@@ -265,13 +265,7 @@ class _RepoPageState extends State<RepoPage> {
                   Container(height: 1, color: AppColors.border),
                   SizedBox(
                     height: 220,
-                    child: Row(
-                      children: [
-                        Expanded(flex: 2, child: _buildCommitPanel()),
-                        Container(width: 1, color: AppColors.border),
-                        Expanded(flex: 3, child: _buildLogPanel()),
-                      ],
-                    ),
+                    child: _buildCommitPanel(),
                   ),
                 ] else ...[
                   Expanded(child: _buildCommitHistoryPanel(showDetails: true)),
@@ -632,30 +626,33 @@ class _RepoPageState extends State<RepoPage> {
             children: [
               const Text('Type', style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(width: 12),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _selectedCommitType,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Commit type',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              Flexible(
+                child: FractionallySizedBox(
+                  widthFactor: 0.33,
+                  child: DropdownButtonFormField<String>(
+                    value: _selectedCommitType,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Commit type',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: _commitTypes
+                        .map(
+                          (t) => DropdownMenuItem<String>(
+                            value: t,
+                            child: Text(t),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (_busy || _generatingCommitInfo)
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() => _selectedCommitType = value);
+                            }
+                          },
                   ),
-                  items: _commitTypes
-                      .map(
-                        (t) => DropdownMenuItem<String>(
-                          value: t,
-                          child: Text(t),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (_busy || _generatingCommitInfo)
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            setState(() => _selectedCommitType = value);
-                          }
-                        },
                 ),
               ),
             ],
@@ -690,15 +687,17 @@ class _RepoPageState extends State<RepoPage> {
                 ),
               ),
               const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: _busy ? null : _commit,
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('Commit'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.success,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 18),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _busy ? null : _commit,
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text('Commit'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 18),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
               ),
             ],
