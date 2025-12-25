@@ -29,4 +29,7 @@ EasyGit is a lightweight Flutter desktop client focused on the daily Git workflo
 - Inline file diff search and navigation.
 - Multi-repo workspace view.
 
+## AI
+- Use AI to generate commit message need and a local file named .env in root path.
+- 'DEEPSEEK_API_KEY=sk-xxxxxxxxxxx' needed in .env
 Feel free to fork and adapt EasyGit to your workflow. Issues/PRs welcome!
