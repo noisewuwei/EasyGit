@@ -29,6 +29,9 @@ class _RepoPageState extends State<RepoPage> {
   List<String> _remotes = [];
   String? _currentBranch;
   String? _selectedRemote;
+  Map<String, List<String>> _remoteBranches = {};
+  bool _remoteBranchesLoading = false;
+  List<GitSubmodule> _submodules = [];
 
   GitChange? _selectedChange;
   bool _diffLoading = false;
@@ -69,6 +72,7 @@ class _RepoPageState extends State<RepoPage> {
       final current = await _git.currentBranch(path);
       final remotes = await _git.remotes(path);
       final history = await _git.recentCommits(path);
+      final submodules = await _git.submodules(path);
 
       final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
 
@@ -80,8 +84,12 @@ class _RepoPageState extends State<RepoPage> {
         _currentBranch = current;
         _remotes = remotes;
         _recentCommits = history;
+        _submodules = submodules;
         if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
           _selectedRemote = _remotes.first;
+          // prefetch branches for the default remote so they show immediately
+          _remoteBranches.clear();
+          _loadRemoteBranches(_selectedRemote!);
         }
         if (nextSelection == null) {
           _selectedChange = null;
@@ -144,8 +152,43 @@ class _RepoPageState extends State<RepoPage> {
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
   Future<void> _push() => _runGitOp(() => _git.push(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
   Future<void> _checkout(String branch) => _runGitOp(() => _git.checkout(widget.repoPath, branch));
+  Future<void> _createBranch(String name, String? base) => _runGitOp(() async {
+        final created = await _git.createBranch(widget.repoPath, name, startPoint: base);
+        final checkout = await _git.checkout(widget.repoPath, name);
+        return '$created\n$checkout';
+      });
+  Future<void> _deleteBranch(String branch) => _runGitOp(() => _git.deleteBranch(widget.repoPath, branch));
 
   void _toggleCommitOverlay() => setState(() => _commitOverlay = !_commitOverlay);
+
+  Future<void> _loadRemoteBranches(String remote) async {
+    if (remote.isEmpty) return;
+    if (_remoteBranches.containsKey(remote)) return;
+    setState(() => _remoteBranchesLoading = true);
+    try {
+      final branches = await _git.remoteBranches(widget.repoPath);
+      if (!mounted) return;
+      // filter to the selected remote
+      final filtered = branches.where((b) => b.startsWith('$remote/')).toList();
+      setState(() {
+        _remoteBranches[remote] = filtered;
+      });
+    } catch (e) {
+      _appendLog('Failed to load remote branches: $e');
+    } finally {
+      if (!mounted) return;
+      setState(() => _remoteBranchesLoading = false);
+    }
+  }
+
+  Future<void> _checkoutRemoteBranch(String remoteBranch) async {
+    // remoteBranch is like 'origin/feature/x'
+    final parts = remoteBranch.split('/');
+    if (parts.length < 2) return;
+    final remote = parts.first;
+    final branch = parts.sublist(1).join('/');
+    await _runGitOp(() => _git.checkoutRemoteBranch(widget.repoPath, remote, branch));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -285,21 +328,25 @@ class _RepoPageState extends State<RepoPage> {
               itemBuilder: (context, index) {
                 final branch = _branches[index];
                 final isCurrent = branch == _currentBranch;
-                return ListTile(
-                  dense: true,
-                  visualDensity: VisualDensity.compact,
-                  leading: Icon(Icons.call_split, size: 16, color: isCurrent ? AppColors.accent : AppColors.textMuted),
-                  title: Text(
-                    branch,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
-                      color: isCurrent ? AppColors.textPrimary : AppColors.textSecondary,
+                return GestureDetector(
+                  onSecondaryTapDown: (details) => _showBranchContextMenu(branch, isCurrent, details.globalPosition),
+                  onLongPress: () => _showBranchContextMenu(branch, isCurrent, null),
+                  child: ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: Icon(Icons.call_split, size: 16, color: isCurrent ? AppColors.accent : AppColors.textMuted),
+                    title: Text(
+                      branch,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+                        color: isCurrent ? AppColors.textPrimary : AppColors.textSecondary,
+                      ),
                     ),
+                    selected: isCurrent,
+                    selectedTileColor: AppColors.panel,
+                    onTap: () => _checkout(branch),
                   ),
-                  selected: isCurrent,
-                  selectedTileColor: AppColors.panel,
-                  onTap: () => _checkout(branch),
                 );
               },
             ),
@@ -308,19 +355,79 @@ class _RepoPageState extends State<RepoPage> {
           _buildSectionHeader('REMOTES'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _remotes
-                  .map((remote) => ChoiceChip(
-                        label: Text(remote),
-                        selected: _selectedRemote == remote,
-                        onSelected: (_) => setState(() => _selectedRemote = remote),
-                        labelStyle: const TextStyle(fontSize: 12),
-                        visualDensity: VisualDensity.compact,
-                      ))
-                  .toList(),
+            child: _remotes.isEmpty
+                ? const Text('No remotes', style: TextStyle(color: AppColors.textMuted))
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _remotes
+                        .map(
+                          (remote) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Text(remote, style: TextStyle(fontSize: 13, color: _selectedRemote == remote ? AppColors.textPrimary : AppColors.textSecondary)),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          // remote branches list for selected remote
+          if (_selectedRemote != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              height: 160,
+              child: _remoteBranchesLoading
+                  ? const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                  : _remoteBranches[_selectedRemote!]?.isEmpty ?? true
+                      ? const Center(child: Text('No remote branches', style: TextStyle(color: AppColors.textMuted)))
+                      : ListView.separated(
+                          itemCount: _remoteBranches[_selectedRemote!]!.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                          itemBuilder: (context, index) {
+                            final rb = _remoteBranches[_selectedRemote!]![index];
+                            return ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              title: Text(rb, style: const TextStyle(fontSize: 13)),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.download, size: 16),
+                                tooltip: 'Checkout',
+                                onPressed: () => _checkoutRemoteBranch(rb),
+                              ),
+                            );
+                          },
+                        ),
             ),
+          const Divider(height: 1, color: AppColors.border),
+          _buildSectionHeader('SUBMODULES'),
+          Expanded(
+            child: _submodules.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text('No submodules', style: TextStyle(color: AppColors.textMuted)),
+                  )
+                : ListView.separated(
+                    itemCount: _submodules.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final sm = _submodules[index];
+                      final absolutePath = '${widget.repoPath}${Platform.pathSeparator}${sm.path}';
+                      return GestureDetector(
+                        onDoubleTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RepoPage(repoPath: absolutePath),
+                            ),
+                          );
+                        },
+                        child: ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          leading: Icon(sm.initialized ? Icons.link : Icons.link_off, size: 16, color: sm.initialized ? AppColors.accent : AppColors.textMuted),
+                          title: Text(sm.path, style: const TextStyle(fontSize: 13)),
+                          subtitle: Text(sm.commit, style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -339,6 +446,13 @@ class _RepoPageState extends State<RepoPage> {
           const Icon(Icons.call_split, size: 16, color: AppColors.textMuted),
           const SizedBox(width: 8),
           Text(_currentBranch ?? '-', style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _showCreateBranchDialog,
+            icon: const Icon(Icons.fork_right, size: 14),
+            label: const Text('New'),
+            style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+          ),
           const SizedBox(width: 24),
           const Icon(Icons.cloud_outlined, size: 16, color: AppColors.textMuted),
           const SizedBox(width: 8),
@@ -364,29 +478,6 @@ class _RepoPageState extends State<RepoPage> {
     final historyList = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: const BoxDecoration(
-            color: AppColors.panel,
-            border: Border(bottom: BorderSide(color: AppColors.border)),
-          ),
-          child: Row(
-            children: [
-              const Text(
-                'RECENT COMMITS',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
-              ),
-              const SizedBox(width: 12),
-              Text(_currentBranch ?? '-', style: const TextStyle(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Refresh history',
-                icon: const Icon(Icons.refresh, size: 16),
-                onPressed: _busy ? null : _refreshAll,
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: Container(
             color: AppColors.background,
@@ -697,6 +788,103 @@ class _RepoPageState extends State<RepoPage> {
         _commitDetailsLoading = false;
         _commitDetailsText = 'Failed to load commit: $e';
       });
+    }
+  }
+
+  void _showCreateBranchDialog() {
+    if (_busy) return;
+    final nameController = TextEditingController();
+    String? base = _currentBranch;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Create Branch'),
+          content: SizedBox(
+            width: 420,
+            child: StatefulBuilder(
+              builder: (context, setStateDialog) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: 'Branch name', hintText: 'feature/new-branch'),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: base,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Base branch'),
+                      items: _branches
+                          .map((b) => DropdownMenuItem<String>(
+                                value: b,
+                                child: Text(b),
+                              ))
+                          .toList(),
+                      onChanged: (v) => setStateDialog(() => base = v),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+                Navigator.of(ctx).pop();
+                await _createBranch(name, base);
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showBranchContextMenu(String branch, bool isCurrent, Offset? position) async {
+    final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final fallback = overlayBox != null ? overlayBox.size.center(Offset.zero) : Offset.zero;
+    final pos = position ?? fallback;
+    final rect = overlayBox != null
+        ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
+        : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: rect,
+      items: [
+        const PopupMenuItem<String>(value: 'delete', child: Text('Delete branch')),
+      ],
+    );
+
+    if (selected == 'delete') {
+      if (isCurrent) {
+        _appendLog('Cannot delete the current checked-out branch.');
+        return;
+      }
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Delete branch?'),
+            content: Text('Are you sure you want to delete branch "$branch"?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+              ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+            ],
+          );
+        },
+      );
+      if (confirm == true) {
+        await _deleteBranch(branch);
+      }
     }
   }
 

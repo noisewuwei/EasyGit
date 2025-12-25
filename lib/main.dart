@@ -107,7 +107,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   const SizedBox(height: 8),
                   Row(children: [
-                    ElevatedButton(onPressed: _addLocalRepo, child: const Text('Add Local')),
+                    ElevatedButton(onPressed: () => _addLocalRepo(ctx), child: const Text('Add Local')),
                     // const SizedBox(width: 8),
                     // ElevatedButton(
                     //     onPressed: () {
@@ -131,7 +131,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   const SizedBox(height: 8),
                   TextField(controller: _cloneTargetController, decoration: const InputDecoration(hintText: 'Target Parent Directory')), 
                   const SizedBox(height: 8),
-                  ElevatedButton(onPressed: _cloneRemoteRepo, child: const Text('Clone Repository')),
+                  ElevatedButton(onPressed: () => _cloneRemoteRepo(ctx), child: const Text('Clone Repository')),
                 ],
               ),
             ),
@@ -142,7 +142,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Future<void> _addLocalRepo() async {
+  Future<void> _addLocalRepo(BuildContext dialogCtx) async {
     final path = _repoController.text.trim();
     if (path.isEmpty) {
       print('Local path is empty.');
@@ -162,13 +162,15 @@ class _MyHomePageState extends State<MyHomePage> {
         _activeRepo = path;
       });
       await _saveRepos();
+      Navigator.of(dialogCtx).pop();
       _openRepo(path);
     } else {
+      Navigator.of(dialogCtx).pop();
       _openRepo(path);
     }
   }
 
-  Future<void> _cloneRemoteRepo() async {
+  Future<void> _cloneRemoteRepo(BuildContext dialogCtx) async {
     final url = _remoteUrlController.text.trim();
     final targetParent = _cloneTargetController.text.trim();
     if (url.isEmpty || targetParent.isEmpty) {
@@ -180,8 +182,9 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
     setState(() => _busy = true);
-    final res = await _git.cloneRepo(url, targetParent);
+    await _git.cloneRepo(url, targetParent);
     setState(() => _busy = false);
+    Navigator.of(dialogCtx).pop();
     // Try to infer cloned folder by listing new directories; keep simple: user can manually add after clone
   }
 
@@ -190,6 +193,8 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _repoController.dispose();
+    _remoteUrlController.dispose();
+    _cloneTargetController.dispose();
     _searchController.dispose();
     super.dispose();
   }
