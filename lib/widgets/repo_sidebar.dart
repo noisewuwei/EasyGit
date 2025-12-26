@@ -25,6 +25,7 @@ class RepoSidebar extends StatelessWidget {
   final void Function(String tag) onSelectTag;
   final void Function(String tag) onCheckoutTag;
   final void Function(String repoPath) onOpenSubmodule;
+  final VoidCallback onUpdateSubmodules;
 
   const RepoSidebar({
     super.key,
@@ -48,6 +49,7 @@ class RepoSidebar extends StatelessWidget {
     required this.onSelectTag,
     required this.onCheckoutTag,
     required this.onOpenSubmodule,
+    required this.onUpdateSubmodules,
   });
 
   @override
@@ -193,7 +195,29 @@ class RepoSidebar extends StatelessWidget {
                   ),
           ),
           const Divider(height: 1, color: AppColors.border),
-          _sectionHeader('SUBMODULES'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'SUBMODULES',
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                      letterSpacing: 1,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.update, size: 18, color: AppColors.textPrimary),
+                  tooltip: 'Update all submodules',
+                  onPressed: onUpdateSubmodules,
+                ),
+              ],
+            ),
+          ),
           Expanded(
             child: submodules.isEmpty
                 ? const Padding(

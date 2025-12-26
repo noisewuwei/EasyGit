@@ -384,6 +384,10 @@ class GitService {
     }
     return stdout.trim().isEmpty ? stderr : stdout;
   }
+
+  Future<String> updateSubmodules(String repoPath) async {
+    return await runGit(['submodule', 'update', '--init', '--recursive', '--force'], repoPath);
+  }
 }
 
 class BranchAheadBehind {

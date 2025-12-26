@@ -297,6 +297,10 @@ class _RepoPageState extends State<RepoPage> {
     await _runGitOp(() => _git.merge(widget.repoPath, sourceBranch));
   }
 
+  Future<void> _updateSubmodules() async {
+    await _runGitOp(() => _git.updateSubmodules(widget.repoPath));
+  }
+
   Future<void> _confirmCheckoutTag(String tag) async {
     if (_busy) return;
     final ok = await showDialog<bool>(
@@ -409,6 +413,7 @@ class _RepoPageState extends State<RepoPage> {
             branchPushCounts: _branchPushCounts,
             tags: _tags,
             onOpenSubmodule: (p) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: p))),
+            onUpdateSubmodules: () => _updateSubmodules(),
             onSelectBranch: (b) => _selectBranch(b),
             onCheckoutBranch: (b) => _checkout(b),
             onShowBranchContextMenu: (b, isCurrent, pos) => _showBranchContextMenu(b, isCurrent, pos),
