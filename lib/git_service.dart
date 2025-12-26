@@ -107,12 +107,24 @@ class GitService {
     return 'PULL RESULT:\n$res';
   }
 
-  Future<String> push(String repoPath, {String? remote, String? branch}) async {
-    final args = ['push'];
+  Future<String> push(String repoPath, {String? remote, String? branch, bool setUpstream = false}) async {
+    final args = <String>['push'];
+    if (setUpstream) args.add('--set-upstream');
     if (remote != null && remote.isNotEmpty) args.add(remote);
     if (branch != null && branch.isNotEmpty) args.add(branch);
     final res = await runGit(args, repoPath);
     return 'PUSH RESULT:\n$res';
+  }
+
+  Future<String> merge(String repoPath, String sourceBranch) async {
+    if (sourceBranch.trim().isEmpty) return 'Merge source branch is empty.';
+    return await runGit(['merge', sourceBranch], repoPath);
+  }
+
+  Future<String> restoreFile(String repoPath, String path) async {
+    if (path.trim().isEmpty) return 'Restore path is empty.';
+    // Restore changes in working tree for the given file.
+    return await runGit(['restore', '--worktree', '--', path], repoPath);
   }
 
   Future<List<GitChange>> status(String repoPath) async {
@@ -225,6 +237,76 @@ class GitService {
     return branches;
   }
 
+  /// Ahead/behind counts for each local branch relative to its upstream.
+  /// pull = commits remote has that local doesn't (needs pull)
+  /// push = commits local has that remote doesn't (needs push)
+  Future<Map<String, BranchAheadBehind>> branchAheadBehind(String repoPath) async {
+    final map = <String, BranchAheadBehind>{};
+    try {
+      final res = await _run([
+        'for-each-ref',
+        '--format=%(refname:short) %(upstream:short)',
+        'refs/heads'
+      ], repoPath);
+      if (res.exitCode != 0) return map;
+      final lines = res.stdout.toString().split('\n');
+      for (final l in lines) {
+        final trimmed = l.trim();
+        if (trimmed.isEmpty) continue;
+        final parts = trimmed.split(RegExp(r"\s+"));
+        if (parts.isEmpty) continue;
+        final local = parts[0];
+        final upstream = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        if (upstream.isEmpty) continue;
+        final cntRes = await _run(['rev-list', '--left-right', '--count', '$upstream...$local'], repoPath);
+        if (cntRes.exitCode != 0) continue;
+        final out = cntRes.stdout.toString().trim();
+        if (out.isEmpty) continue;
+        final nums = out.split(RegExp(r"\s+"));
+        if (nums.length < 2) continue;
+        final remoteOnly = int.tryParse(nums[0]) ?? 0; // pull
+        final localOnly = int.tryParse(nums[1]) ?? 0; // push
+        map[local] = BranchAheadBehind(pull: remoteOnly, push: localOnly);
+      }
+    } catch (_) {}
+    return map;
+  }
+
+  /// Returns a map of local branch -> number of commits the upstream is ahead of local.
+  /// Example: {'feature/x': 3} means remote has 3 commits that local doesn't (needs pull).
+  Future<Map<String, int>> remoteAheadCountPerBranch(String repoPath) async {
+    final map = <String, int>{};
+    try {
+      // List local branches and their upstream (may be empty)
+      final res = await _run([
+        'for-each-ref',
+        '--format=%(refname:short) %(upstream:short)',
+        'refs/heads'
+      ], repoPath);
+      if (res.exitCode != 0) return map;
+      final lines = res.stdout.toString().split('\n');
+      for (final l in lines) {
+        final trimmed = l.trim();
+        if (trimmed.isEmpty) continue;
+        final parts = trimmed.split(RegExp(r"\s+"));
+        if (parts.isEmpty) continue;
+        final local = parts[0];
+        final upstream = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        if (upstream.isEmpty) continue;
+        // Get counts: remoteOnly localOnly
+        final cntRes = await _run(['rev-list', '--left-right', '--count', '$upstream...$local'], repoPath);
+        if (cntRes.exitCode != 0) continue;
+        final out = cntRes.stdout.toString().trim();
+        if (out.isEmpty) continue;
+        final nums = out.split(RegExp(r"\s+"));
+        if (nums.length < 2) continue;
+        final remoteOnly = int.tryParse(nums[0]) ?? 0;
+        map[local] = remoteOnly;
+      }
+    } catch (_) {}
+    return map;
+  }
+
   /// Create a local branch that tracks the remote branch and check it out.
   /// Uses `git checkout --track <remote>/<branch>`; if that fails, falls back
   /// to `git checkout -b <branch> <remote>/<branch>`.
@@ -239,9 +321,13 @@ class GitService {
     return res;
   }
 
-  Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20}) async {
+  Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20, String? branch}) async {
     final format = '%h%x09%an%x09%ad%x09%s';
-    final result = await _run(['log', '-n', '$limit', '--date=short', '--pretty=format:$format'], repoPath);
+    final args = ['log', '-n', '$limit', '--date=short', '--pretty=format:$format'];
+    if (branch != null && branch.trim().isNotEmpty) {
+      args.add(branch.trim());
+    }
+    final result = await _run(args, repoPath);
     if (result.exitCode != 0) {
       return [];
     }
@@ -287,4 +373,11 @@ class GitService {
     }
     return stdout.trim().isEmpty ? stderr : stdout;
   }
+}
+
+class BranchAheadBehind {
+  final int pull;
+  final int push;
+
+  const BranchAheadBehind({required this.pull, required this.push});
 }

@@ -10,6 +10,7 @@ class ChangesAndDiff extends StatelessWidget {
   final String? diffText;
   final ScrollController diffScrollController;
 
+  final void Function(GitChange change) onRestoreUnstaged;
   final void Function(GitChange change) onPreviewChange;
   final void Function(GitChange change) onStage;
   final void Function(GitChange change) onUnstage;
@@ -25,6 +26,7 @@ class ChangesAndDiff extends StatelessWidget {
     required this.diffLoading,
     required this.diffText,
     required this.diffScrollController,
+    required this.onRestoreUnstaged,
     required this.onPreviewChange,
     required this.onStage,
     required this.onUnstage,
@@ -89,31 +91,39 @@ class ChangesAndDiff extends StatelessWidget {
                     final isSelected = selectedChange != null &&
                         selectedChange!.path == file.path &&
                         selectedChange!.staged == file.staged;
-                    return ListTile(
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                      leading: Icon(
-                        Icons.insert_drive_file_outlined,
-                        size: 16,
-                        color: isStaged ? AppColors.success : AppColors.warning,
+                    return GestureDetector(
+                      onSecondaryTapDown: isStaged || busy
+                          ? null
+                          : (details) => _showUnstagedContextMenu(context, details.globalPosition, file),
+                      onLongPress: isStaged || busy
+                          ? null
+                          : () => _showUnstagedContextMenu(context, null, file),
+                      child: ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        leading: Icon(
+                          _iconForChange(file, isStaged),
+                          size: 16,
+                          color: isStaged ? AppColors.success : AppColors.warning,
+                        ),
+                        title: Text(file.path, style: const TextStyle(fontSize: 13)),
+                        subtitle: Text(
+                          isStaged ? 'IDX: ${file.indexStatus}' : 'WT: ${file.workTreeStatus}',
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                        ),
+                        trailing: IconButton(
+                          icon: Icon(isStaged ? Icons.remove : Icons.add, size: 16),
+                          tooltip: isStaged ? 'Unstage' : 'Stage',
+                          onPressed: busy
+                              ? null
+                              : () => isStaged
+                                  ? onUnstage(file)
+                                  : onStage(file),
+                        ),
+                        selected: isSelected,
+                        selectedTileColor: AppColors.panel,
+                        onTap: () => onPreviewChange(file),
                       ),
-                      title: Text(file.path, style: const TextStyle(fontSize: 13)),
-                      subtitle: Text(
-                        isStaged ? 'IDX: ${file.indexStatus}' : 'WT: ${file.workTreeStatus}',
-                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
-                      ),
-                      trailing: IconButton(
-                        icon: Icon(isStaged ? Icons.remove : Icons.add, size: 16),
-                        tooltip: isStaged ? 'Unstage' : 'Stage',
-                        onPressed: busy
-                            ? null
-                            : () => isStaged
-                                ? onUnstage(file)
-                                : onStage(file),
-                      ),
-                      selected: isSelected,
-                      selectedTileColor: AppColors.panel,
-                      onTap: () => onPreviewChange(file),
                     );
                   },
                 ),
@@ -191,5 +201,35 @@ class ChangesAndDiff extends StatelessWidget {
     if (line.startsWith('-') && !line.startsWith('---')) return AppColors.danger;
     if (line.startsWith('+++') || line.startsWith('---')) return AppColors.textSecondary;
     return AppColors.textPrimary;
+  }
+
+  IconData _iconForChange(GitChange change, bool isStaged) {
+    final status = (isStaged ? change.indexStatus : change.workTreeStatus).toUpperCase();
+    if (status == '?' || status == 'A') return Icons.fiber_new;
+    if (status == 'D') return Icons.delete_forever;
+    return Icons.insert_drive_file_outlined;
+  }
+
+  Future<void> _showUnstagedContextMenu(BuildContext context, Offset? position, GitChange file) async {
+    if (busy) return;
+    // If no position provided (long press), center in overlay.
+    final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final fallback = overlayBox != null ? overlayBox.size.center(Offset.zero) : Offset.zero;
+    final pos = position ?? fallback;
+    final rect = overlayBox != null
+        ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
+        : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: rect,
+      items: const [
+        PopupMenuItem<String>(value: 'restore', child: Text('Restore changes')),
+      ],
+    );
+
+    if (selected == 'restore') {
+      onRestoreUnstaged(file);
+    }
   }
 }

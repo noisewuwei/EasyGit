@@ -5,10 +5,13 @@ class RepoToolbar extends StatelessWidget {
   final String? currentBranch;
   final String? selectedRemote;
   final bool busy;
+  final bool commitOverlay;
+  final int changeCount;
   final VoidCallback onCreateBranch;
   final VoidCallback onPull;
   final VoidCallback onPush;
   final VoidCallback onToggleCommitOverlay;
+  final VoidCallback onOpenShell;
   final VoidCallback onRefresh;
 
   const RepoToolbar({
@@ -16,10 +19,13 @@ class RepoToolbar extends StatelessWidget {
     required this.currentBranch,
     required this.selectedRemote,
     required this.busy,
+    required this.commitOverlay,
+    required this.changeCount,
     required this.onCreateBranch,
     required this.onPull,
     required this.onPush,
     required this.onToggleCommitOverlay,
+    required this.onOpenShell,
     required this.onRefresh,
   });
 
@@ -55,7 +61,13 @@ class RepoToolbar extends StatelessWidget {
           const SizedBox(width: 8),
           _actionButton('Push', Icons.arrow_upward, onPush, busy),
           const SizedBox(width: 8),
-          _actionButton('Add', Icons.add, onToggleCommitOverlay, busy),
+          _addButton(onToggleCommitOverlay, busy),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: busy ? null : onOpenShell,
+            icon: const Icon(Icons.terminal, size: 18),
+            tooltip: 'Open Git Bash',
+          ),
           const SizedBox(width: 8),
           IconButton(
             onPressed: busy ? null : onRefresh,
@@ -72,6 +84,36 @@ class RepoToolbar extends StatelessWidget {
       onPressed: busy ? null : onPressed,
       icon: Icon(icon, size: 16),
       label: Text(label),
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        side: const BorderSide(color: AppColors.border),
+      ),
+    );
+  }
+
+  Widget _addButton(VoidCallback onPressed, bool busy) {
+    final label = commitOverlay ? 'Done' : 'Add';
+    final icon = commitOverlay ? Icons.check : Icons.add;
+    return OutlinedButton.icon(
+      onPressed: busy ? null : onPressed,
+      icon: Icon(icon, size: 16),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label),
+          if (!commitOverlay && changeCount > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: AppColors.accent, borderRadius: BorderRadius.circular(12)),
+              child: Text(
+                '$changeCount',
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ]
+        ],
+      ),
       style: OutlinedButton.styleFrom(
         visualDensity: VisualDensity.compact,
         side: const BorderSide(color: AppColors.border),

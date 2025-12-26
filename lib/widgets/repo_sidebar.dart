@@ -2,10 +2,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../ui/app_colors.dart';
 import '../git_service.dart';
-import '../repo_page.dart';
 
 class RepoSidebar extends StatelessWidget {
   final List<String> branches;
+  final String? selectedBranch;
+  final Map<String, int> branchPullCounts;
+  final Map<String, int> branchPushCounts;
   final String? currentBranch;
   final List<String> remotes;
   final String? selectedRemote;
@@ -14,13 +16,16 @@ class RepoSidebar extends StatelessWidget {
   final List<GitSubmodule> submodules;
   final String repoPath;
 
+  final void Function(String branch) onSelectBranch;
   final void Function(String branch) onCheckoutBranch;
   final void Function(String branch, bool isCurrent, Offset? pos) onShowBranchContextMenu;
   final void Function(String remoteBranch) onCheckoutRemoteBranch;
+  final void Function(String repoPath) onOpenSubmodule;
 
   const RepoSidebar({
     super.key,
     required this.branches,
+    required this.selectedBranch,
     required this.currentBranch,
     required this.remotes,
     required this.selectedRemote,
@@ -28,9 +33,13 @@ class RepoSidebar extends StatelessWidget {
     required this.remoteBranchesLoading,
     required this.submodules,
     required this.repoPath,
+    required this.branchPullCounts,
+    required this.branchPushCounts,
+    required this.onSelectBranch,
     required this.onCheckoutBranch,
     required this.onShowBranchContextMenu,
     required this.onCheckoutRemoteBranch,
+    required this.onOpenSubmodule,
   });
 
   @override
@@ -51,9 +60,14 @@ class RepoSidebar extends StatelessWidget {
               itemBuilder: (context, index) {
                 final branch = branches[index];
                 final isCurrent = branch == currentBranch;
+                final isSelected = branch == selectedBranch;
+                final pullCount = branchPullCounts[branch] ?? 0;
+                final pushCount = branchPushCounts[branch] ?? 0;
                 return GestureDetector(
                   onSecondaryTapDown: (details) => onShowBranchContextMenu(branch, isCurrent, details.globalPosition),
                   onLongPress: () => onShowBranchContextMenu(branch, isCurrent, null),
+                  onTap: () => onSelectBranch(branch),
+                  onDoubleTap: () => onCheckoutBranch(branch),
                   child: ListTile(
                     dense: true,
                     visualDensity: VisualDensity.compact,
@@ -62,13 +76,37 @@ class RepoSidebar extends StatelessWidget {
                       branch,
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
-                        color: isCurrent ? AppColors.textPrimary : AppColors.textSecondary,
+                        fontWeight: isCurrent || isSelected ? FontWeight.w600 : FontWeight.w400,
+                        color: isCurrent
+                            ? AppColors.textPrimary
+                            : isSelected
+                                ? AppColors.textPrimary
+                                : AppColors.textSecondary,
                       ),
                     ),
-                    selected: isCurrent,
+                    selected: isCurrent || isSelected,
                     selectedTileColor: AppColors.panel,
-                    onTap: () => onCheckoutBranch(branch),
+                    trailing: (pullCount > 0 || pushCount > 0)
+                        ? Wrap(
+                            spacing: 6,
+                            children: [
+                              if (pullCount > 0)
+                                _badge(
+                                  icon: Icons.arrow_downward,
+                                  color: AppColors.warning,
+                                  textColor: Colors.black,
+                                  count: pullCount,
+                                ),
+                              if (pushCount > 0)
+                                _badge(
+                                  icon: Icons.arrow_upward,
+                                  color: AppColors.accent,
+                                  textColor: Colors.white,
+                                  count: pushCount,
+                                ),
+                            ],
+                          )
+                        : null,
                   ),
                 );
               },
@@ -133,13 +171,7 @@ class RepoSidebar extends StatelessWidget {
                       final sm = submodules[index];
                       final absolutePath = repoPath + Platform.pathSeparator + sm.path;
                       return GestureDetector(
-                        onDoubleTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => RepoPage(repoPath: absolutePath),
-                            ),
-                          );
-                        },
+                        onDoubleTap: () => onOpenSubmodule(absolutePath),
                         child: ListTile(
                           dense: true,
                           visualDensity: VisualDensity.compact,
@@ -170,4 +202,19 @@ class RepoSidebar extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _badge({required IconData icon, required Color color, required Color textColor, required int count}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: textColor),
+        const SizedBox(width: 4),
+        Text('$count', style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)),
+      ],
+    ),
+  );
 }

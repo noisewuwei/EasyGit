@@ -51,12 +51,15 @@ class _RepoPageState extends State<RepoPage> {
   Map<String, List<String>> _remoteBranches = {};
   bool _remoteBranchesLoading = false;
   List<GitSubmodule> _submodules = [];
+  Map<String, int> _branchPullCounts = {};
+  Map<String, int> _branchPushCounts = {};
 
   GitChange? _selectedChange;
   bool _diffLoading = false;
   String? _diffText;
 
   List<GitCommit> _recentCommits = [];
+  String? _selectedBranch;
   bool _commitOverlay = false;
   GitCommit? _selectedCommit;
   bool _commitDetailsLoading = false;
@@ -88,8 +91,13 @@ class _RepoPageState extends State<RepoPage> {
       final branches = await _git.branches(path);
       final current = await _git.currentBranch(path);
       final remotes = await _git.remotes(path);
-      final history = await _git.recentCommits(path);
+      var selectedBranch = _selectedBranch;
+      if (selectedBranch == null || !branches.contains(selectedBranch)) {
+        selectedBranch = current;
+      }
+      final history = await _git.recentCommits(path, branch: selectedBranch);
       final submodules = await _git.submodules(path);
+      final aheadBehind = await _git.branchAheadBehind(path);
 
       final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
 
@@ -99,7 +107,10 @@ class _RepoPageState extends State<RepoPage> {
         _changes = changes;
         _branches = branches;
         _currentBranch = current;
+        _selectedBranch = selectedBranch;
         _remotes = remotes;
+        _branchPullCounts = {for (final e in aheadBehind.entries) e.key: e.value.pull};
+        _branchPushCounts = {for (final e in aheadBehind.entries) e.key: e.value.push};
         _recentCommits = history;
         _submodules = submodules;
         if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
@@ -159,6 +170,25 @@ class _RepoPageState extends State<RepoPage> {
     await _runGitOp(() => _git.unstageFiles(widget.repoPath, stagedPaths));
   }
 
+  Future<void> _restoreChange(GitChange change) async {
+    if (_busy) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Restore changes?'),
+          content: Text('Restore (discard local changes to) "${change.path}"?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Restore')),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    await _runGitOp(() => _git.restoreFile(widget.repoPath, change.path));
+  }
+
   Future<void> _commit() async {
     final message = _messageController.text.trim();
     if (message.isEmpty) return;
@@ -167,7 +197,18 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
-  Future<void> _push() => _runGitOp(() => _git.push(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
+  Future<void> _push() => _runGitOp(() => _git.push(
+        widget.repoPath,
+        remote: _selectedRemote,
+        branch: _currentBranch,
+        setUpstream: _selectedRemote != null && _currentBranch != null,
+      ));
+  Future<void> _pushBranch(String branch) => _runGitOp(() => _git.push(
+        widget.repoPath,
+        remote: 'origin',
+        branch: branch,
+        setUpstream: true,
+      ));
   Future<void> _checkout(String branch) => _runGitOp(() => _git.checkout(widget.repoPath, branch));
   Future<void> _createBranch(String name, String? base) => _runGitOp(() async {
         final created = await _git.createBranch(widget.repoPath, name, startPoint: base);
@@ -175,6 +216,25 @@ class _RepoPageState extends State<RepoPage> {
         return '$created\n$checkout';
       });
   Future<void> _deleteBranch(String branch) => _runGitOp(() => _git.deleteBranch(widget.repoPath, branch));
+
+  Future<void> _selectBranch(String branch) async {
+    setState(() {
+      _selectedBranch = branch;
+      _recentCommits = [];
+      _selectedCommit = null;
+      _commitDetailsText = null;
+    });
+    try {
+      final history = await _git.recentCommits(widget.repoPath, branch: branch);
+      if (!mounted) return;
+      if (_selectedBranch != branch) return;
+      setState(() {
+        _recentCommits = history;
+      });
+    } catch (e) {
+      _appendLog('Failed to load history for $branch: $e');
+    }
+  }
 
   void _toggleCommitOverlay() => setState(() => _commitOverlay = !_commitOverlay);
 
@@ -205,6 +265,41 @@ class _RepoPageState extends State<RepoPage> {
     final remote = parts.first;
     final branch = parts.sublist(1).join('/');
     await _runGitOp(() => _git.checkoutRemoteBranch(widget.repoPath, remote, branch));
+  }
+
+  Future<void> _mergeIntoCurrent(String sourceBranch) async {
+    if (_currentBranch == null) return;
+    if (sourceBranch == _currentBranch) {
+      _appendLog('Cannot merge a branch into itself.');
+      return;
+    }
+    await _runGitOp(() => _git.merge(widget.repoPath, sourceBranch));
+  }
+
+  Future<void> _openGitBash() async {
+    if (_busy) return;
+    try {
+      if (Platform.isWindows) {
+        final candidates = [
+          r'C:\\Program Files\\Git\\git-bash.exe',
+          r'C:\\Program Files (x86)\\Git\\git-bash.exe',
+          'git-bash.exe',
+        ];
+        String? exe;
+        for (final c in candidates) {
+          if (await File(c).exists()) {
+            exe = c;
+            break;
+          }
+        }
+        exe ??= 'git-bash.exe';
+        await Process.start(exe, [], workingDirectory: widget.repoPath);
+      } else {
+        await Process.start('bash', [], workingDirectory: widget.repoPath);
+      }
+    } catch (e) {
+      _appendLog('Failed to open Git Bash: $e');
+    }
   }
 
   @override
@@ -259,6 +354,7 @@ class _RepoPageState extends State<RepoPage> {
         children: [
           RepoSidebar(
             branches: _branches,
+            selectedBranch: _selectedBranch,
             currentBranch: _currentBranch,
             remotes: _remotes,
             selectedRemote: _selectedRemote,
@@ -266,6 +362,10 @@ class _RepoPageState extends State<RepoPage> {
             remoteBranchesLoading: _remoteBranchesLoading,
             submodules: _submodules,
             repoPath: widget.repoPath,
+            branchPullCounts: _branchPullCounts,
+            branchPushCounts: _branchPushCounts,
+            onOpenSubmodule: (p) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: p))),
+            onSelectBranch: (b) => _selectBranch(b),
             onCheckoutBranch: (b) => _checkout(b),
             onShowBranchContextMenu: (b, isCurrent, pos) => _showBranchContextMenu(b, isCurrent, pos),
             onCheckoutRemoteBranch: (rb) => _checkoutRemoteBranch(rb),
@@ -277,10 +377,13 @@ class _RepoPageState extends State<RepoPage> {
                   currentBranch: _currentBranch,
                   selectedRemote: _selectedRemote,
                   busy: _busy,
+                  commitOverlay: _commitOverlay,
+                  changeCount: _changes.length,
                   onCreateBranch: _showCreateBranchDialog,
                   onPull: _pull,
                   onPush: _push,
                   onToggleCommitOverlay: _toggleCommitOverlay,
+                  onOpenShell: _openGitBash,
                   onRefresh: _refreshAll,
                 ),
                 if (_commitOverlay) ...[
@@ -304,6 +407,7 @@ class _RepoPageState extends State<RepoPage> {
                       diffLoading: _diffLoading,
                       diffText: _diffText,
                       diffScrollController: _diffScrollController,
+                      onRestoreUnstaged: (c) => _restoreChange(c),
                       onPreviewChange: (c) => _previewChange(c),
                       onStage: (c) => _stage(c),
                       onUnstage: (c) => _unstage(c),
@@ -655,13 +759,29 @@ class _RepoPageState extends State<RepoPage> {
         ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
         : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
 
+    final hasOrigin = _remotes.contains('origin');
+
     final selected = await showMenu<String>(
       context: context,
       position: rect,
       items: [
+        if (hasOrigin)
+          const PopupMenuItem<String>(value: 'push_origin', child: Text('Push to origin')),
+        if (_currentBranch != null && !isCurrent)
+          PopupMenuItem<String>(value: 'merge_into_current', child: Text('Merge into ${_currentBranch!}')),
         const PopupMenuItem<String>(value: 'delete', child: Text('Delete branch')),
       ],
     );
+
+    if (selected == 'push_origin') {
+      await _pushBranch(branch);
+      return;
+    }
+
+    if (selected == 'merge_into_current') {
+      await _mergeIntoCurrent(branch);
+      return;
+    }
 
     if (selected == 'delete') {
       if (isCurrent) {
