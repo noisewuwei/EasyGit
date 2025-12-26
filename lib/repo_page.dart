@@ -60,6 +60,7 @@ class _RepoPageState extends State<RepoPage> {
 
   List<GitCommit> _recentCommits = [];
   String? _selectedBranch;
+  List<String> _tags = [];
   bool _commitOverlay = false;
   GitCommit? _selectedCommit;
   bool _commitDetailsLoading = false;
@@ -96,6 +97,7 @@ class _RepoPageState extends State<RepoPage> {
         selectedBranch = current;
       }
       final history = await _git.recentCommits(path, branch: selectedBranch);
+      final tags = await _git.tags(path);
       final submodules = await _git.submodules(path);
       final aheadBehind = await _git.branchAheadBehind(path);
 
@@ -108,6 +110,7 @@ class _RepoPageState extends State<RepoPage> {
         _branches = branches;
         _currentBranch = current;
         _selectedBranch = selectedBranch;
+        _tags = tags;
         _remotes = remotes;
         _branchPullCounts = {for (final e in aheadBehind.entries) e.key: e.value.pull};
         _branchPushCounts = {for (final e in aheadBehind.entries) e.key: e.value.push};
@@ -267,6 +270,24 @@ class _RepoPageState extends State<RepoPage> {
     await _runGitOp(() => _git.checkoutRemoteBranch(widget.repoPath, remote, branch));
   }
 
+  Future<void> _confirmCheckoutRemoteBranch(String remoteBranch) async {
+    if (_busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Checkout Remote Branch'),
+        content: Text('Checkout "$remoteBranch" to a local branch?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Checkout')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _checkoutRemoteBranch(remoteBranch);
+    }
+  }
+
   Future<void> _mergeIntoCurrent(String sourceBranch) async {
     if (_currentBranch == null) return;
     if (sourceBranch == _currentBranch) {
@@ -274,6 +295,29 @@ class _RepoPageState extends State<RepoPage> {
       return;
     }
     await _runGitOp(() => _git.merge(widget.repoPath, sourceBranch));
+  }
+
+  Future<void> _confirmCheckoutTag(String tag) async {
+    if (_busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Checkout Tag'),
+        content: Text('Checkout tag "$tag" (detached HEAD)?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Checkout')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _checkout(tag);
+    }
+  }
+
+  Future<void> _selectRef(String ref) async {
+    // Reuse branch selection logic; git log accepts tags and remote refs too.
+    await _selectBranch(ref);
   }
 
   Future<void> _openGitBash() async {
@@ -325,17 +369,16 @@ class _RepoPageState extends State<RepoPage> {
             ? Row(
                 children: [
                   Expanded(
-                    child: DragToMoveArea(
-                      child: Container(
-                        alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ),
+                    child: Container(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
               )
             : Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        flexibleSpace: isDesktop ? const DragToMoveArea(child: SizedBox.expand()) : null,
         backgroundColor: AppColors.panel,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
@@ -364,11 +407,15 @@ class _RepoPageState extends State<RepoPage> {
             repoPath: widget.repoPath,
             branchPullCounts: _branchPullCounts,
             branchPushCounts: _branchPushCounts,
+            tags: _tags,
             onOpenSubmodule: (p) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: p))),
             onSelectBranch: (b) => _selectBranch(b),
             onCheckoutBranch: (b) => _checkout(b),
             onShowBranchContextMenu: (b, isCurrent, pos) => _showBranchContextMenu(b, isCurrent, pos),
-            onCheckoutRemoteBranch: (rb) => _checkoutRemoteBranch(rb),
+            onCheckoutRemoteBranch: (rb) => _confirmCheckoutRemoteBranch(rb),
+            onSelectRemoteBranch: (rb) => _selectRef(rb),
+            onSelectTag: (t) => _selectRef(t),
+            onCheckoutTag: (t) => _confirmCheckoutTag(t),
           ),
           Expanded(
             child: Column(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../ui/app_colors.dart';
+import '../ui/diff_utils.dart';
 import '../git_service.dart';
 
 class ChangesAndDiff extends StatelessWidget {
@@ -169,7 +170,7 @@ class ChangesAndDiff extends StatelessWidget {
                           controller: diffScrollController,
                           padding: const EdgeInsets.all(12),
                           child: SelectableText.rich(
-                            TextSpan(children: _buildDiffSpans(diffText!)),
+                            TextSpan(children: buildDiffSpans(diffText!, baseStyle: const TextStyle(fontFamily: 'Consolas', fontSize: 12))),
                           ),
                         ),
                       ),
@@ -179,29 +180,7 @@ class ChangesAndDiff extends StatelessWidget {
     );
   }
 
-  List<TextSpan> _buildDiffSpans(String diff) {
-    final lines = diff.split('\n');
-    return lines
-        .map(
-          (line) => TextSpan(
-            text: '$line\n',
-            style: TextStyle(
-              fontFamily: 'Consolas',
-              fontSize: 12,
-              color: _diffColorForLine(line),
-            ),
-          ),
-        )
-        .toList();
-  }
-
-  Color _diffColorForLine(String line) {
-    if (line.startsWith('@@')) return AppColors.accent;
-    if (line.startsWith('+') && !line.startsWith('+++')) return AppColors.success;
-    if (line.startsWith('-') && !line.startsWith('---')) return AppColors.danger;
-    if (line.startsWith('+++') || line.startsWith('---')) return AppColors.textSecondary;
-    return AppColors.textPrimary;
-  }
+  
 
   IconData _iconForChange(GitChange change, bool isStaged) {
     final status = (isStaged ? change.indexStatus : change.workTreeStatus).toUpperCase();

@@ -321,6 +321,17 @@ class GitService {
     return res;
   }
 
+  Future<List<String>> tags(String repoPath) async {
+    final result = await _run(['tag', '--list'], repoPath);
+    if (result.exitCode != 0) return [];
+    return result.stdout
+        .toString()
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
   Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20, String? branch}) async {
     final format = '%h%x09%an%x09%ad%x09%s';
     final args = ['log', '-n', '$limit', '--date=short', '--pretty=format:$format'];

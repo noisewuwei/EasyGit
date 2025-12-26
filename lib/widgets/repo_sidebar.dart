@@ -15,11 +15,15 @@ class RepoSidebar extends StatelessWidget {
   final bool remoteBranchesLoading;
   final List<GitSubmodule> submodules;
   final String repoPath;
+  final List<String> tags;
 
   final void Function(String branch) onSelectBranch;
   final void Function(String branch) onCheckoutBranch;
   final void Function(String branch, bool isCurrent, Offset? pos) onShowBranchContextMenu;
   final void Function(String remoteBranch) onCheckoutRemoteBranch;
+  final void Function(String remoteBranch) onSelectRemoteBranch;
+  final void Function(String tag) onSelectTag;
+  final void Function(String tag) onCheckoutTag;
   final void Function(String repoPath) onOpenSubmodule;
 
   const RepoSidebar({
@@ -35,10 +39,14 @@ class RepoSidebar extends StatelessWidget {
     required this.repoPath,
     required this.branchPullCounts,
     required this.branchPushCounts,
+    required this.tags,
     required this.onSelectBranch,
     required this.onCheckoutBranch,
     required this.onShowBranchContextMenu,
     required this.onCheckoutRemoteBranch,
+    required this.onSelectRemoteBranch,
+    required this.onSelectTag,
+    required this.onCheckoutTag,
     required this.onOpenSubmodule,
   });
 
@@ -114,22 +122,22 @@ class RepoSidebar extends StatelessWidget {
           ),
           const Divider(height: 1, color: AppColors.border),
           _sectionHeader('REMOTES'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            child: remotes.isEmpty
-                ? const Text('No remotes', style: TextStyle(color: AppColors.textMuted))
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: remotes
-                        .map(
-                          (remote) => Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: Text(remote, style: TextStyle(fontSize: 13, color: selectedRemote == remote ? AppColors.textPrimary : AppColors.textSecondary)),
-                          ),
-                        )
-                        .toList(),
-                  ),
-          ),
+          // Padding(
+          //   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          //   child: remotes.isEmpty
+          //       ? const Text('No remotes', style: TextStyle(color: AppColors.textMuted))
+          //       : Column(
+          //           crossAxisAlignment: CrossAxisAlignment.start,
+          //           children: remotes
+          //               .map(
+          //                 (remote) => Padding(
+          //                   padding: const EdgeInsets.only(bottom: 6),
+          //                   child: Text(remote, style: TextStyle(fontSize: 13, color: selectedRemote == remote ? AppColors.textPrimary : AppColors.textSecondary)),
+          //                 ),
+          //               )
+          //               .toList(),
+          //         ),
+          // ),
           if (selectedRemote != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -143,19 +151,47 @@ class RepoSidebar extends StatelessWidget {
                           separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                           itemBuilder: (context, index) {
                             final rb = remoteBranches[selectedRemote!]![index];
-                            return ListTile(
-                              dense: true,
-                              visualDensity: VisualDensity.compact,
-                              title: Text(rb, style: const TextStyle(fontSize: 13)),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.download, size: 16),
-                                tooltip: 'Checkout',
-                                onPressed: () => onCheckoutRemoteBranch(rb),
+                            return GestureDetector(
+                              onTap: () => onSelectRemoteBranch(rb),
+                              onDoubleTap: () => onCheckoutRemoteBranch(rb),
+                              child: ListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                title: Text(rb, style: const TextStyle(fontSize: 13)),
+                                selected: selectedBranch == rb,
+                                selectedTileColor: AppColors.panel,
                               ),
                             );
                           },
                         ),
             ),
+          const Divider(height: 1, color: AppColors.border),
+          _sectionHeader('TAGS'),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            height: 160,
+            child: tags.isEmpty
+                ? const Center(child: Text('No tags', style: TextStyle(color: AppColors.textMuted)))
+                : ListView.separated(
+                    itemCount: tags.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final tag = tags[index];
+                      return GestureDetector(
+                        onTap: () => onSelectTag(tag),
+                        onDoubleTap: () => onCheckoutTag(tag),
+                        child: ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          leading: const Icon(Icons.local_offer, size: 16, color: AppColors.textMuted),
+                          title: Text(tag, style: const TextStyle(fontSize: 13)),
+                          selected: selectedBranch == tag,
+                          selectedTileColor: AppColors.panel,
+                        ),
+                      );
+                    },
+                  ),
+          ),
           const Divider(height: 1, color: AppColors.border),
           _sectionHeader('SUBMODULES'),
           Expanded(

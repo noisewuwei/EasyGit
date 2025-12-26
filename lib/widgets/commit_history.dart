@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../ui/app_colors.dart';
+import '../ui/diff_utils.dart';
 import '../git_service.dart';
 
 class CommitHistoryPanel extends StatelessWidget {
@@ -107,7 +108,10 @@ class CommitHistoryPanel extends StatelessWidget {
                         child: SingleChildScrollView(
                           controller: diffScrollController,
                           padding: const EdgeInsets.all(12),
-                          child: SelectableText(detailsText!, style: const TextStyle(fontFamily: 'Consolas', fontSize: 12, color: AppColors.textPrimary)),
+                          child: SelectableText.rich(
+                            TextSpan(children: buildDiffSpans(detailsText!, baseStyle: const TextStyle(fontFamily: 'Consolas', fontSize: 12))),
+                            style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
+                          ),
                         ),
                       ),
           ),
