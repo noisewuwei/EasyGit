@@ -72,12 +72,6 @@ class AppTheme {
         side: BorderSide(color: AppColors.border),
         padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       ),
-      cardTheme: CardThemeData(
-        color: AppColors.panel,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: AppColors.border)),
-        margin: EdgeInsets.zero,
-      ),
     );
   }
 }
