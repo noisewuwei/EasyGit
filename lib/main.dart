@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -118,7 +118,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     const SizedBox(width: 8),
                     ElevatedButton(
                         onPressed: () async {
-                          final dirPath = await FilePicker.platform.getDirectoryPath();
+                          final dirPath = await getDirectoryPath();
                           if (dirPath != null) {
                             _repoController.text = dirPath;
                           }
