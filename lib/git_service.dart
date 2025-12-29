@@ -43,7 +43,39 @@ class GitSubmodule {
   });
 }
 
+class BranchAheadBehind {
+  final int pull;
+  final int push;
+
+  const BranchAheadBehind({required this.pull, required this.push});
+}
+
 class GitService {
+  bool _isConflictStatus(String x, String y) {
+    final pair = '$x$y';
+    if (x == 'U' || y == 'U') return true;
+    return pair == 'AA' || pair == 'DD' || pair == 'AU' || pair == 'UA' || pair == 'UD' || pair == 'DU';
+  }
+
+  Future<bool> _stageBlobExists(String repoPath, int stage, String path) async {
+    // stage: 1=base, 2=ours, 3=theirs
+    final res = await _run(['cat-file', '-e', ':$stage:$path'], repoPath);
+    return res.exitCode == 0;
+  }
+
+  Future<String> _diffStages(String repoPath, int a, int b, String path, String label) async {
+    final res = await _run(['diff', '--color=never', ':$a:$path', ':$b:$path'], repoPath);
+    final out = res.stdout.toString();
+    final err = res.stderr.toString();
+    if (res.exitCode != 0 && out.trim().isEmpty) {
+      return '===== $label =====\nFailed to load diff: $err\n';
+    }
+    if (out.trim().isEmpty) {
+      return '===== $label =====\nNo diff to display.\n';
+    }
+    return '===== $label =====\n$out\n';
+  }
+
   Future<ProcessResult> _run(List<String> args, String workingDir) async {
     return await Process.run(
       'git',
@@ -142,6 +174,12 @@ class GitService {
         path = path.split(' -> ').last.trim();
       }
       final staged = x != ' ' && x != '?';
+      if (_isConflictStatus(x, y)) {
+        // Show conflicts in both staged and unstaged lists.
+        changes.add(GitChange(path: path, indexStatus: x, workTreeStatus: y, staged: true));
+        changes.add(GitChange(path: path, indexStatus: x, workTreeStatus: y, staged: false));
+        continue;
+      }
       changes.add(GitChange(path: path, indexStatus: x, workTreeStatus: y, staged: staged));
     }
     return changes;
@@ -189,6 +227,27 @@ class GitService {
     final result = await _run(['remote'], repoPath);
     final out = result.stdout.toString();
     return out.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  }
+
+  Future<String?> remoteUrl(String repoPath, String name) async {
+    final result = await _run(['remote', 'get-url', name], repoPath);
+    if (result.exitCode != 0) return null;
+    return result.stdout.toString().trim();
+  }
+
+  Future<String> addRemote(String repoPath, String name, String url) async {
+    if (name.trim().isEmpty || url.trim().isEmpty) return 'Remote name or url is empty.';
+    return await runGit(['remote', 'add', name, url], repoPath);
+  }
+
+  Future<String> setRemoteUrl(String repoPath, String name, String url) async {
+    if (name.trim().isEmpty || url.trim().isEmpty) return 'Remote name or url is empty.';
+    return await runGit(['remote', 'set-url', name, url], repoPath);
+  }
+
+  Future<String> removeRemote(String repoPath, String name) async {
+    if (name.trim().isEmpty) return 'Remote name is empty.';
+    return await runGit(['remote', 'remove', name], repoPath);
   }
 
   Future<List<GitSubmodule>> submodules(String repoPath) async {
@@ -332,9 +391,13 @@ class GitService {
         .toList();
   }
 
-  Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20, String? branch}) async {
+  Future<List<GitCommit>> recentCommits(String repoPath, {int limit = 20, int skip = 0, String? branch}) async {
     final format = '%h%x09%an%x09%ad%x09%s';
-    final args = ['log', '-n', '$limit', '--date=short', '--pretty=format:$format'];
+    final args = ['log', '-n', '$limit'];
+    if (skip > 0) {
+      args.addAll(['--skip', '$skip']);
+    }
+    args.addAll(['--date=short', '--pretty=format:$format']);
     if (branch != null && branch.trim().isNotEmpty) {
       args.add(branch.trim());
     }
@@ -358,8 +421,47 @@ class GitService {
   }
 
   Future<String> diffFile(String repoPath, GitChange change) async {
+    final isConflict = _isConflictStatus(change.indexStatus, change.workTreeStatus);
+    // For conflicts, build a composite view so both normal changes and conflict parts are visible.
+    if (isConflict) {
+      // Section 1: working tree diff (shows conflict markers plus other edits).
+      final wtRes = await _run(['diff', '--color=never', '--', change.path], repoPath);
+      final wtOut = wtRes.stdout.toString();
+      final wtErr = wtRes.stderr.toString();
+
+      final hasBase = await _stageBlobExists(repoPath, 1, change.path);
+      final hasOurs = await _stageBlobExists(repoPath, 2, change.path);
+      final hasTheirs = await _stageBlobExists(repoPath, 3, change.path);
+
+      final buffer = StringBuffer();
+
+      if (wtRes.exitCode == 0 && wtOut.trim().isNotEmpty) {
+        buffer.writeln('===== WORKTREE vs INDEX (含冲突标记) =====');
+        buffer.writeln(wtOut.trim());
+        buffer.writeln();
+      } else if (wtRes.exitCode != 0 && wtOut.trim().isEmpty) {
+        buffer.writeln('===== WORKTREE DIFF FAILED =====');
+        buffer.writeln(wtErr);
+        buffer.writeln();
+      }
+
+      if (hasBase && hasOurs) {
+        buffer.write(await _diffStages(repoPath, 1, 2, change.path, 'CURRENT (ours) vs BASE'));
+      }
+      if (hasBase && hasTheirs) {
+        buffer.write(await _diffStages(repoPath, 1, 3, change.path, 'INCOMING (theirs) vs BASE'));
+      }
+      if (hasOurs && hasTheirs) {
+        buffer.write(await _diffStages(repoPath, 2, 3, change.path, 'CURRENT (ours) vs INCOMING (theirs)'));
+      }
+
+      final text = buffer.toString();
+      if (text.trim().isNotEmpty) return text;
+      // Fall through to regular diff if nothing collected.
+    }
+
     final args = <String>['diff'];
-    if (change.staged) {
+    if (change.staged && !isConflict) {
       args.add('--cached');
     }
     args.addAll(['--', change.path]);
@@ -388,11 +490,81 @@ class GitService {
   Future<String> updateSubmodules(String repoPath) async {
     return await runGit(['submodule', 'update', '--init', '--recursive', '--force'], repoPath);
   }
-}
 
-class BranchAheadBehind {
-  final int pull;
-  final int push;
+  Future<String?> getConfig(String repoPath, String key, {bool global = false}) async {
+    final args = ['config'];
+    if (global) args.add('--global');
+    args.add(key);
+    final res = await _run(args, repoPath);
+    if (res.exitCode != 0) return null;
+    return res.stdout.toString().trim();
+  }
 
-  const BranchAheadBehind({required this.pull, required this.push});
+  Future<String> setConfig(String repoPath, String key, String value, {bool global = false}) async {
+    if (key.trim().isEmpty) return 'Config key is empty.';
+    final args = ['config'];
+    if (global) args.add('--global');
+    args.addAll([key, value]);
+    return await runGit(args, repoPath);
+  }
+
+  Future<String> unsetConfig(String repoPath, String key, {bool global = false}) async {
+    if (key.trim().isEmpty) return 'Config key is empty.';
+    final args = ['config'];
+    if (global) args.add('--global');
+    args.addAll(['--unset', key]);
+    return await runGit(args, repoPath);
+  }
+
+  Future<bool> hasConflicts(String repoPath) async {
+    try {
+      final res = await _run(['status', '--porcelain'], repoPath);
+      if (res.exitCode != 0) return false;
+      final lines = res.stdout.toString().split('\n');
+      for (final line in lines) {
+        if (line.length < 3) continue;
+        final x = line[0];
+        final y = line[1];
+        final pair = '$x$y';
+        if (x == 'U' || y == 'U') return true;
+        if (pair == 'AA' || pair == 'DD' || pair == 'AU' || pair == 'UA' || pair == 'UD' || pair == 'DU') {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<String> resolveConflictOurs(String repoPath, String path) async {
+    if (path.trim().isEmpty) return 'Path is empty.';
+    final res1 = await runGit(['checkout', '--ours', '--', path], repoPath);
+    final res2 = await runGit(['add', '--', path], repoPath);
+    return '$res1\n$res2';
+  }
+
+  Future<String> resolveConflictTheirs(String repoPath, String path) async {
+    if (path.trim().isEmpty) return 'Path is empty.';
+    final res1 = await runGit(['checkout', '--theirs', '--', path], repoPath);
+    final res2 = await runGit(['add', '--', path], repoPath);
+    return '$res1\n$res2';
+  }
+
+  Future<String> markConflictResolved(String repoPath, String path) async {
+    if (path.trim().isEmpty) return 'Path is empty.';
+    // Mark as resolved by staging the file
+    return await runGit(['add', '--', path], repoPath);
+  }
+
+  Future<List<String>> conflictPaths(String repoPath) async {
+    final result = await _run(['diff', '--name-only', '--diff-filter=U'], repoPath);
+    if (result.exitCode != 0) return [];
+    return result.stdout
+        .toString()
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
 }

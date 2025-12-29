@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 
@@ -26,6 +27,7 @@ class _RepoPageState extends State<RepoPage> {
   final _git = GitService();
   final _messageController = TextEditingController();
   final _diffScrollController = ScrollController();
+  final _historyScrollController = ScrollController();
   static const List<String> _commitTypes = [
     'init',
     'feature',
@@ -39,6 +41,11 @@ class _RepoPageState extends State<RepoPage> {
   ];
 
   bool _busy = false;
+  bool _refreshing = false;
+  Timer? _autoRefreshTimer;
+  bool _autoRefreshEnabled = true;
+  static const Duration _autoRefreshInterval = Duration(seconds: 15);
+  static const int _commitPageSize = 20;
   String _log = '';
   bool _generatingCommitInfo = false;
   String _selectedCommitType = 'feature';
@@ -65,17 +72,24 @@ class _RepoPageState extends State<RepoPage> {
   GitCommit? _selectedCommit;
   bool _commitDetailsLoading = false;
   String? _commitDetailsText;
+  bool _loadingMoreCommits = false;
+  bool _commitHasMore = true;
+  int _commitLoadedCount = 0;
 
   @override
   void initState() {
     super.initState();
     _refreshAll();
+    _startAutoRefresh();
+    _historyScrollController.addListener(_onHistoryScroll);
   }
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _messageController.dispose();
     _diffScrollController.dispose();
+    _historyScrollController.dispose();
     super.dispose();
   }
 
@@ -85,9 +99,11 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   Future<void> _refreshAll() async {
-    if (!mounted) return;
-    final path = widget.repoPath;
+    if (_refreshing) return;
+    _refreshing = true;
     try {
+      if (!mounted) return;
+      final path = widget.repoPath;
       final changes = await _git.status(path);
       final branches = await _git.branches(path);
       final current = await _git.currentBranch(path);
@@ -96,7 +112,7 @@ class _RepoPageState extends State<RepoPage> {
       if (selectedBranch == null || !branches.contains(selectedBranch)) {
         selectedBranch = current;
       }
-      final history = await _git.recentCommits(path, branch: selectedBranch);
+      final history = await _git.recentCommits(path, branch: selectedBranch, limit: _commitPageSize, skip: 0);
       final tags = await _git.tags(path);
       final submodules = await _git.submodules(path);
       final aheadBehind = await _git.branchAheadBehind(path);
@@ -115,6 +131,9 @@ class _RepoPageState extends State<RepoPage> {
         _branchPullCounts = {for (final e in aheadBehind.entries) e.key: e.value.pull};
         _branchPushCounts = {for (final e in aheadBehind.entries) e.key: e.value.push};
         _recentCommits = history;
+        _commitLoadedCount = history.length;
+        _commitHasMore = history.length == _commitPageSize;
+        _loadingMoreCommits = false;
         _submodules = submodules;
         if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
           _selectedRemote = _remotes.first;
@@ -145,6 +164,83 @@ class _RepoPageState extends State<RepoPage> {
       }
     } catch (e) {
       _appendLog('Refresh failed: $e');
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _loadMoreCommits() async {
+    if (_loadingMoreCommits || !_commitHasMore) return;
+    _loadingMoreCommits = true;
+    try {
+      final path = widget.repoPath;
+      final branch = _selectedBranch;
+      final more = await _git.recentCommits(path, branch: branch, limit: _commitPageSize, skip: _commitLoadedCount);
+      if (!mounted || more.isEmpty) {
+        _commitHasMore = false;
+        return;
+      }
+      setState(() {
+        _recentCommits.addAll(more);
+        _commitLoadedCount += more.length;
+        _commitHasMore = more.length == _commitPageSize;
+      });
+    } catch (e) {
+      _appendLog('Load more commits failed: $e');
+    } finally {
+      _loadingMoreCommits = false;
+    }
+  }
+
+  void _onHistoryScroll() {
+    if (!_historyScrollController.hasClients) return;
+    final position = _historyScrollController.position;
+    if (position.extentAfter < 200) {
+      _loadMoreCommits();
+    }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    if (!_autoRefreshEnabled) return;
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (timer) async {
+      if (!mounted || _busy || _refreshing) return;
+      await _refreshAll();
+    });
+  }
+
+  Future<void> _openRemoteUrl() async {
+    if (_busy) return;
+    final repoPath = widget.repoPath;
+    String? remoteName = _selectedRemote;
+    if (remoteName == null || !_remotes.contains(remoteName)) {
+      if (_remotes.contains('origin')) {
+        remoteName = 'origin';
+      } else if (_remotes.isNotEmpty) {
+        remoteName = _remotes.first;
+      }
+    }
+
+    if (remoteName == null) {
+      _appendLog('No remote configured to open.');
+      return;
+    }
+
+    try {
+      final url = await _git.remoteUrl(repoPath, remoteName);
+      if (url == null || url.isEmpty) {
+        _appendLog('Remote "$remoteName" has no URL.');
+        return;
+      }
+      if (Platform.isWindows) {
+        await Process.start('cmd', ['/c', 'start', '', url]);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', [url]);
+      } else {
+        await Process.start('xdg-open', [url]);
+      }
+    } catch (e) {
+      _appendLog('Failed to open remote URL: $e');
     }
   }
 
@@ -228,11 +324,14 @@ class _RepoPageState extends State<RepoPage> {
       _commitDetailsText = null;
     });
     try {
-      final history = await _git.recentCommits(widget.repoPath, branch: branch);
+      final history = await _git.recentCommits(widget.repoPath, branch: branch, limit: _commitPageSize, skip: 0);
       if (!mounted) return;
       if (_selectedBranch != branch) return;
       setState(() {
         _recentCommits = history;
+        _commitLoadedCount = history.length;
+        _commitHasMore = history.length == _commitPageSize;
+        _loadingMoreCommits = false;
       });
     } catch (e) {
       _appendLog('Failed to load history for $branch: $e');
@@ -294,11 +393,75 @@ class _RepoPageState extends State<RepoPage> {
       _appendLog('Cannot merge a branch into itself.');
       return;
     }
-    await _runGitOp(() => _git.merge(widget.repoPath, sourceBranch));
+    await _runGitOp(() async {
+      final res = await _git.merge(widget.repoPath, sourceBranch);
+      final conflicts = await _git.hasConflicts(widget.repoPath);
+      if (conflicts && mounted) {
+        await _prepareConflictCommitMessage(sourceBranch);
+        _showConflictDialog();
+      }
+      return res;
+    });
+  }
+
+  Future<void> _prepareConflictCommitMessage(String sourceBranch) async {
+    final conflicts = await _git.conflictPaths(widget.repoPath);
+    final target = _currentBranch ?? 'current';
+    final buffer = StringBuffer();
+    buffer.writeln("Merge branch '$sourceBranch' into $target");
+    if (conflicts.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('# Conflicts:');
+      for (final p in conflicts) {
+        buffer.writeln('#\t$p');
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _commitOverlay = true;
+      _messageController.text = buffer.toString();
+    });
+  }
+
+  Future<void> _resolveConflictOurs(GitChange change) async {
+    await _runGitOp(() async {
+      final res = await _git.resolveConflictOurs(widget.repoPath, change.path);
+      final conflicts = await _git.hasConflicts(widget.repoPath);
+      if (conflicts && mounted) _showConflictDialog();
+      return res;
+    });
+  }
+
+  Future<void> _resolveConflictTheirs(GitChange change) async {
+    await _runGitOp(() async {
+      final res = await _git.resolveConflictTheirs(widget.repoPath, change.path);
+      final conflicts = await _git.hasConflicts(widget.repoPath);
+      if (conflicts && mounted) _showConflictDialog();
+      return res;
+    });
+  }
+
+  Future<void> _markConflictResolved(GitChange change) async {
+    await _runGitOp(() => _git.markConflictResolved(widget.repoPath, change.path));
   }
 
   Future<void> _updateSubmodules() async {
     await _runGitOp(() => _git.updateSubmodules(widget.repoPath));
+  }
+
+  void _showConflictDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Merge conflicts detected'),
+          content: const Text('Resolve the conflicts before committing. Conflict files are marked in Unstaged Changes.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _confirmCheckoutTag(String tag) async {
@@ -350,6 +513,223 @@ class _RepoPageState extends State<RepoPage> {
     }
   }
 
+  Future<void> _openSettings() async {
+    if (_busy) return;
+    final repoPath = widget.repoPath;
+
+    // Fetch current data.
+    final remoteNames = await _git.remotes(repoPath);
+    final remoteMap = <String, String>{};
+    for (final r in remoteNames) {
+      remoteMap[r] = await _git.remoteUrl(repoPath, r) ?? '';
+    }
+
+    final globalName = await _git.getConfig(repoPath, 'user.name', global: true) ?? '';
+    final globalEmail = await _git.getConfig(repoPath, 'user.email', global: true) ?? '';
+    final localName = await _git.getConfig(repoPath, 'user.name');
+    final localEmail = await _git.getConfig(repoPath, 'user.email');
+    bool useGlobal = true;
+
+    final nameCtrl = TextEditingController(text: localName ?? '');
+    final emailCtrl = TextEditingController(text: localEmail ?? '');
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        bool saving = false;
+        Map<String, String> remotesState = Map.of(remoteMap);
+        bool useGlobalState = useGlobal;
+        bool autoRefreshState = _autoRefreshEnabled;
+
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            Future<void> addOrEditRemote({String? name, String? url}) async {
+              final nameC = TextEditingController(text: name ?? '');
+              final urlC = TextEditingController(text: url ?? '');
+              final isEdit = name != null;
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (c2) {
+                  return AlertDialog(
+                    title: Text(isEdit ? 'Edit Remote' : 'Add Remote'),
+                    content: SizedBox(
+                      width: 380,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextField(controller: nameC, decoration: const InputDecoration(labelText: 'Name'), enabled: !isEdit),
+                          TextField(controller: urlC, decoration: const InputDecoration(labelText: 'URL')),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.of(c2).pop(false), child: const Text('Cancel')),
+                      ElevatedButton(onPressed: () => Navigator.of(c2).pop(true), child: const Text('Save')),
+                    ],
+                  );
+                },
+              );
+              if (ok != true) return;
+              final newName = nameC.text.trim();
+              final newUrl = urlC.text.trim();
+              if (newName.isEmpty || newUrl.isEmpty) return;
+              setStateDialog(() => saving = true);
+              try {
+                final res = isEdit
+                    ? await _git.setRemoteUrl(repoPath, newName, newUrl)
+                    : await _git.addRemote(repoPath, newName, newUrl);
+                _appendLog(res);
+                setStateDialog(() {
+                  remotesState[newName] = newUrl;
+                  saving = false;
+                });
+              } finally {
+                setStateDialog(() => saving = false);
+              }
+            }
+
+            Future<void> removeRemote(String name) async {
+              setStateDialog(() => saving = true);
+              try {
+                final res = await _git.removeRemote(repoPath, name);
+                _appendLog(res);
+                setStateDialog(() {
+                  remotesState.remove(name);
+                  saving = false;
+                });
+              } finally {
+                setStateDialog(() => saving = false);
+              }
+            }
+
+            Future<void> saveUserConfig() async {
+              setStateDialog(() => saving = true);
+              try {
+                if (useGlobalState) {
+                  await _git.unsetConfig(repoPath, 'user.name');
+                  await _git.unsetConfig(repoPath, 'user.email');
+                } else {
+                  await _git.setConfig(repoPath, 'user.name', nameCtrl.text.trim());
+                  await _git.setConfig(repoPath, 'user.email', emailCtrl.text.trim());
+                }
+              } finally {
+                setStateDialog(() => saving = false);
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Settings'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Remotes', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      ...remotesState.entries.map(
+                        (e) => ListTile(
+                          dense: true,
+                          title: Text(e.key),
+                          subtitle: Text(e.value.isEmpty ? '(no url)' : e.value),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: saving ? null : () => addOrEditRemote(name: e.key, url: e.value),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 18),
+                                onPressed: saving ? null : () => removeRemote(e.key),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: saving ? null : () => addOrEditRemote(),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Remote'),
+                      ),
+                      const Divider(height: 24),
+                      const Text('User Info', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Auto refresh'),
+                        subtitle: const Text('Refresh repository status every 15 seconds'),
+                        value: autoRefreshState,
+                        onChanged: saving
+                            ? null
+                            : (v) {
+                                setStateDialog(() => autoRefreshState = v);
+                              },
+                      ),
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Use global user config'),
+                        subtitle: Text('Global: ${globalName.isEmpty ? "(unset)" : globalName} / ${globalEmail.isEmpty ? "(unset)" : globalEmail}'),
+                        value: useGlobalState,
+                        onChanged: saving
+                            ? null
+                            : (v) {
+                                setStateDialog(() => useGlobalState = v ?? true);
+                              },
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: nameCtrl,
+                        enabled: !useGlobalState && !saving,
+                        decoration: const InputDecoration(labelText: 'Full Name'),
+                      ),
+                      TextField(
+                        controller: emailCtrl,
+                        enabled: !useGlobalState && !saving,
+                        decoration: const InputDecoration(labelText: 'Email'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.of(ctx).pop(),
+                  child: const Text('Close'),
+                ),
+                ElevatedButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          await saveUserConfig();
+                          if (mounted) {
+                            setState(() {
+                              _autoRefreshEnabled = autoRefreshState;
+                            });
+                            if (_autoRefreshEnabled) {
+                              _startAutoRefresh();
+                            } else {
+                              _autoRefreshTimer?.cancel();
+                              _autoRefreshTimer = null;
+                            }
+                            Navigator.of(ctx).pop(remotesState);
+                          }
+                        },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    await _refreshAll();
+  }
+
   @override
   Widget build(BuildContext context) {
     final repoName = widget.repoPath.split(Platform.pathSeparator).last;
@@ -360,41 +740,63 @@ class _RepoPageState extends State<RepoPage> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        leadingWidth: canPop ? 48 : 0,
-        leading: canPop
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back',
-                onPressed: () => Navigator.of(context).maybePop(),
-              )
-            : null,
+        leadingWidth: Platform.isMacOS ? 0 : (canPop ? 48 : 0),
+        leading: Platform.isMacOS
+            ? null
+            : canPop
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Back',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  )
+                : null,
         titleSpacing: 0,
+        centerTitle: false,
         title: isDesktop
-            ? Row(
+            ? const SizedBox.shrink()
+            : Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+        flexibleSpace: isDesktop
+            ? Stack(
                 children: [
-                  Expanded(
-                    child: Container(
-                      alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Positioned.fill(child: DragToMoveArea(child: SizedBox.expand())),
+                  // Center the repo name independently of leading/actions widths.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 72),
+                          child: Text(
+                            repoName,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],
               )
-            : Text(repoName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        flexibleSpace: isDesktop ? const DragToMoveArea(child: SizedBox.expand()) : null,
+            : null,
         backgroundColor: AppColors.panel,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: AppColors.border),
         ),
         actions: [
+          if (Platform.isMacOS && canPop)
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
           if (_busy)
             const Padding(
               padding: EdgeInsets.only(right: 8),
               child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
             ),
-          if (isDesktop) const WindowControls(),
+          if (isDesktop && !Platform.isMacOS) const WindowControls(),
         ],
       ),
       body: Row(
@@ -435,6 +837,8 @@ class _RepoPageState extends State<RepoPage> {
                   onPull: _pull,
                   onPush: _push,
                   onToggleCommitOverlay: _toggleCommitOverlay,
+                  onOpenRemote: _openRemoteUrl,
+                  onOpenSettings: _openSettings,
                   onOpenShell: _openGitBash,
                   onRefresh: _refreshAll,
                 ),
@@ -449,6 +853,7 @@ class _RepoPageState extends State<RepoPage> {
                       detailsLoading: _commitDetailsLoading,
                       detailsText: _commitDetailsText,
                       diffScrollController: _diffScrollController,
+                      historyScrollController: _historyScrollController,
                     ),
                   ),
                   Expanded(
@@ -460,6 +865,9 @@ class _RepoPageState extends State<RepoPage> {
                       diffText: _diffText,
                       diffScrollController: _diffScrollController,
                       onRestoreUnstaged: (c) => _restoreChange(c),
+                      onResolveOurs: (c) => _resolveConflictOurs(c),
+                      onResolveTheirs: (c) => _resolveConflictTheirs(c),
+                      onMarkResolved: (c) => _markConflictResolved(c),
                       onPreviewChange: (c) => _previewChange(c),
                       onStage: (c) => _stage(c),
                       onUnstage: (c) => _unstage(c),
@@ -492,6 +900,7 @@ class _RepoPageState extends State<RepoPage> {
                       detailsLoading: _commitDetailsLoading,
                       detailsText: _commitDetailsText,
                       diffScrollController: _diffScrollController,
+                      historyScrollController: _historyScrollController,
                     ),
                   ),
                 ],

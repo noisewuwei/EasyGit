@@ -11,7 +11,9 @@ class RepoToolbar extends StatelessWidget {
   final VoidCallback onPull;
   final VoidCallback onPush;
   final VoidCallback onToggleCommitOverlay;
+  final VoidCallback onOpenRemote;
   final VoidCallback onOpenShell;
+  final VoidCallback onOpenSettings;
   final VoidCallback onRefresh;
 
   const RepoToolbar({
@@ -25,7 +27,9 @@ class RepoToolbar extends StatelessWidget {
     required this.onPull,
     required this.onPush,
     required this.onToggleCommitOverlay,
+    required this.onOpenRemote,
     required this.onOpenShell,
+    required this.onOpenSettings,
     required this.onRefresh,
   });
 
@@ -64,6 +68,18 @@ class RepoToolbar extends StatelessWidget {
           _addButton(onToggleCommitOverlay, busy),
           const SizedBox(width: 8),
           IconButton(
+            onPressed: busy ? null : onOpenSettings,
+            icon: const Icon(Icons.settings, size: 18),
+            tooltip: 'Settings',
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: busy ? null : onOpenRemote,
+            icon: const Icon(Icons.open_in_new, size: 18),
+            tooltip: 'Open remote',
+          ),
+          const SizedBox(width: 4),
+          IconButton(
             onPressed: busy ? null : onOpenShell,
             icon: const Icon(Icons.terminal, size: 18),
             tooltip: 'Open Git Bash',
@@ -92,7 +108,7 @@ class RepoToolbar extends StatelessWidget {
   }
 
   Widget _addButton(VoidCallback onPressed, bool busy) {
-    final label = commitOverlay ? 'Done' : 'Add';
+    final label = commitOverlay ? 'Done' : 'Commit';
     final icon = commitOverlay ? Icons.check : Icons.add;
     return OutlinedButton.icon(
       onPressed: busy ? null : onPressed,

@@ -35,9 +35,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'EasyGit - Simple',
+      title: 'EasyGit',
       theme: AppTheme.dark,
-      home: const MyHomePage(title: 'EasyGit - Repo Manager'),
+      home: const MyHomePage(title: 'EasyGit'),
     );
   }
 }
@@ -205,33 +205,40 @@ class _MyHomePageState extends State<MyHomePage> {
     final filtered = query.isEmpty
         ? _repos
         : _repos.where((r) => r.toLowerCase().contains(query) || r.split(Platform.pathSeparator).last.toLowerCase().contains(query)).toList();
+    final showWindowControls = isDesktop && !Platform.isMacOS;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: 0,
         title: isDesktop
-            ? Row(
-                children: [
-                  Expanded(
-                    child: DragToMoveArea(
-                      child: Container(
-                        alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(widget.title),
+            ? ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: kToolbarHeight),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: DragToMoveArea(
+                        child: Container(
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Text(widget.title, textAlign: TextAlign.center),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                    if (showWindowControls)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: WindowControls(),
+                        ),
+                      ),
+                  ],
+                ),
               )
-            : Text(widget.title),
+            : Text(widget.title, textAlign: TextAlign.center),
+        centerTitle: true,
         actions: [
-          // IconButton(
-          //   icon: const Icon(Icons.add),
-          //   tooltip: '添加仓库',
-          //   onPressed: _busy ? null : _showAddRepoDialog,
-          // ),
-          if (isDesktop) const SizedBox(width: 8),
-          if (isDesktop) const WindowControls(),
+          // actions kept empty to avoid shifting center
         ],
       ),
       body: Padding(

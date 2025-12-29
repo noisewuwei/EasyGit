@@ -12,6 +12,9 @@ class ChangesAndDiff extends StatelessWidget {
   final ScrollController diffScrollController;
 
   final void Function(GitChange change) onRestoreUnstaged;
+  final void Function(GitChange change) onResolveOurs;
+  final void Function(GitChange change) onResolveTheirs;
+  final void Function(GitChange change) onMarkResolved;
   final void Function(GitChange change) onPreviewChange;
   final void Function(GitChange change) onStage;
   final void Function(GitChange change) onUnstage;
@@ -28,6 +31,9 @@ class ChangesAndDiff extends StatelessWidget {
     required this.diffText,
     required this.diffScrollController,
     required this.onRestoreUnstaged,
+    required this.onResolveOurs,
+    required this.onResolveTheirs,
+    required this.onMarkResolved,
     required this.onPreviewChange,
     required this.onStage,
     required this.onUnstage,
@@ -93,12 +99,8 @@ class ChangesAndDiff extends StatelessWidget {
                         selectedChange!.path == file.path &&
                         selectedChange!.staged == file.staged;
                     return GestureDetector(
-                      onSecondaryTapDown: isStaged || busy
-                          ? null
-                          : (details) => _showUnstagedContextMenu(context, details.globalPosition, file),
-                      onLongPress: isStaged || busy
-                          ? null
-                          : () => _showUnstagedContextMenu(context, null, file),
+                      onSecondaryTapDown: (details) => _showChangeContextMenu(context, details.globalPosition, file, isStaged),
+                      onLongPress: () => _showChangeContextMenu(context, null, file, isStaged),
                       child: ListTile(
                         dense: true,
                         visualDensity: VisualDensity.compact,
@@ -112,14 +114,22 @@ class ChangesAndDiff extends StatelessWidget {
                           isStaged ? 'IDX: ${file.indexStatus}' : 'WT: ${file.workTreeStatus}',
                           style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
                         ),
-                        trailing: IconButton(
-                          icon: Icon(isStaged ? Icons.remove : Icons.add, size: 16),
-                          tooltip: isStaged ? 'Unstage' : 'Stage',
-                          onPressed: busy
-                              ? null
-                              : () => isStaged
-                                  ? onUnstage(file)
-                                  : onStage(file),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_isConflict(file))
+                              const Icon(Icons.warning_amber, color: AppColors.danger, size: 18),
+                            if (_isConflict(file)) const SizedBox(width: 6),
+                            IconButton(
+                              icon: Icon(isStaged ? Icons.remove : Icons.add, size: 16),
+                              tooltip: isStaged ? 'Unstage' : 'Stage',
+                              onPressed: busy
+                                  ? null
+                                  : () => isStaged
+                                      ? onUnstage(file)
+                                      : onStage(file),
+                            ),
+                          ],
                         ),
                         selected: isSelected,
                         selectedTileColor: AppColors.panel,
@@ -189,7 +199,15 @@ class ChangesAndDiff extends StatelessWidget {
     return Icons.insert_drive_file_outlined;
   }
 
-  Future<void> _showUnstagedContextMenu(BuildContext context, Offset? position, GitChange file) async {
+  bool _isConflict(GitChange change) {
+    final x = change.indexStatus;
+    final y = change.workTreeStatus;
+    final pair = '$x$y';
+    if (x == 'U' || y == 'U') return true;
+    return pair == 'AA' || pair == 'DD' || pair == 'AU' || pair == 'UA' || pair == 'UD' || pair == 'DU';
+  }
+
+  Future<void> _showChangeContextMenu(BuildContext context, Offset? position, GitChange file, bool isStaged) async {
     if (busy) return;
     // If no position provided (long press), center in overlay.
     final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -199,16 +217,72 @@ class ChangesAndDiff extends StatelessWidget {
         ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
         : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
 
+    final items = <PopupMenuEntry<String>>[];
+
+    if (_isConflict(file)) {
+      items.add(
+        const PopupMenuItem<String>(
+          value: 'resolve_submenu',
+          child: Row(
+            children: [
+              Text('解决冲突'),
+              Spacer(),
+              Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+        ),
+      );
+      items.add(const PopupMenuDivider());
+    }
+
+    if (!isStaged) {
+      items.add(const PopupMenuItem<String>(value: 'restore', child: Text('Restore changes')));
+    }
+
+    if (items.isEmpty) return;
+
     final selected = await showMenu<String>(
       context: context,
       position: rect,
-      items: const [
-        PopupMenuItem<String>(value: 'restore', child: Text('Restore changes')),
-      ],
+      items: items,
     );
 
-    if (selected == 'restore') {
-      onRestoreUnstaged(file);
+    switch (selected) {
+      case 'restore':
+        onRestoreUnstaged(file);
+        break;
+      case 'resolve_submenu':
+        final submenuChoice = await _showConflictSubmenu(context, pos);
+        switch (submenuChoice) {
+          case 'ours':
+            onResolveOurs(file);
+            break;
+          case 'theirs':
+            onResolveTheirs(file);
+            break;
+          case 'mark_resolved':
+            onMarkResolved(file);
+            break;
+        }
+        break;
     }
+  }
+
+  Future<String?> _showConflictSubmenu(BuildContext context, Offset basePosition) {
+    final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final submenuOffset = basePosition + const Offset(180, 0);
+    final rect = overlayBox != null
+        ? RelativeRect.fromRect(Rect.fromLTWH(submenuOffset.dx, submenuOffset.dy, 0, 0), Offset.zero & overlayBox.size)
+        : RelativeRect.fromLTRB(submenuOffset.dx, submenuOffset.dy, submenuOffset.dx, submenuOffset.dy);
+
+    return showMenu<String>(
+      context: context,
+      position: rect,
+      items: const [
+        PopupMenuItem<String>(value: 'ours', child: Text('使用我的版本解决')),
+        PopupMenuItem<String>(value: 'theirs', child: Text('使用他人版本解决')),
+        PopupMenuItem<String>(value: 'mark_resolved', child: Text('标记为已解决')),
+      ],
+    );
   }
 }

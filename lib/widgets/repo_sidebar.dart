@@ -148,20 +148,23 @@ class RepoSidebar extends StatelessWidget {
                   ? const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
                   : remoteBranches[selectedRemote!]?.isEmpty ?? true
                       ? const Center(child: Text('No remote branches', style: TextStyle(color: AppColors.textMuted)))
-                      : ListView.separated(
+                      : ListView.builder(
                           itemCount: remoteBranches[selectedRemote!]!.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                           itemBuilder: (context, index) {
                             final rb = remoteBranches[selectedRemote!]![index];
-                            return GestureDetector(
-                              onTap: () => onSelectRemoteBranch(rb),
-                              onDoubleTap: () => onCheckoutRemoteBranch(rb),
-                              child: ListTile(
-                                dense: true,
-                                visualDensity: VisualDensity.compact,
-                                title: Text(rb, style: const TextStyle(fontSize: 13)),
-                                selected: selectedBranch == rb,
-                                selectedTileColor: AppColors.panel,
+                            return Padding(
+                              padding: EdgeInsets.only(bottom: index == remoteBranches[selectedRemote!]!.length - 1 ? 0 : 6),
+                              child: GestureDetector(
+                                onTap: () => onSelectRemoteBranch(rb),
+                                onDoubleTap: () => onCheckoutRemoteBranch(rb),
+                                child: ListTile(
+                                  dense: true,
+                                  visualDensity: VisualDensity.compact,
+                                  title: Text(rb, style: const TextStyle(fontSize: 13)),
+                                  selected: selectedBranch == rb,
+                                  selectedTileColor: AppColors.panel,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
                               ),
                             );
                           },
@@ -174,21 +177,24 @@ class RepoSidebar extends StatelessWidget {
             height: 160,
             child: tags.isEmpty
                 ? const Center(child: Text('No tags', style: TextStyle(color: AppColors.textMuted)))
-                : ListView.separated(
+                : ListView.builder(
                     itemCount: tags.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                     itemBuilder: (context, index) {
                       final tag = tags[index];
-                      return GestureDetector(
-                        onTap: () => onSelectTag(tag),
-                        onDoubleTap: () => onCheckoutTag(tag),
-                        child: ListTile(
-                          dense: true,
-                          visualDensity: VisualDensity.compact,
-                          leading: const Icon(Icons.local_offer, size: 16, color: AppColors.textMuted),
-                          title: Text(tag, style: const TextStyle(fontSize: 13)),
-                          selected: selectedBranch == tag,
-                          selectedTileColor: AppColors.panel,
+                      return Padding(
+                        padding: EdgeInsets.only(bottom: index == tags.length - 1 ? 0 : 6),
+                        child: GestureDetector(
+                          onTap: () => onSelectTag(tag),
+                          onDoubleTap: () => onCheckoutTag(tag),
+                          child: ListTile(
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            leading: const Icon(Icons.local_offer, size: 16, color: AppColors.textMuted),
+                            title: Text(tag, style: const TextStyle(fontSize: 13)),
+                            selected: selectedBranch == tag,
+                            selectedTileColor: AppColors.panel,
+                            contentPadding: EdgeInsets.zero,
+                          ),
                         ),
                       );
                     },
@@ -219,29 +225,32 @@ class RepoSidebar extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: submodules.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Text('No submodules', style: TextStyle(color: AppColors.textMuted)),
-                  )
-                : ListView.separated(
-                    itemCount: submodules.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
-                    itemBuilder: (context, index) {
-                      final sm = submodules[index];
-                      final absolutePath = repoPath + Platform.pathSeparator + sm.path;
-                      return GestureDetector(
-                        onDoubleTap: () => onOpenSubmodule(absolutePath),
-                        child: ListTile(
-                          dense: true,
-                          visualDensity: VisualDensity.compact,
-                          leading: Icon(sm.initialized ? Icons.link : Icons.link_off, size: 16, color: sm.initialized ? AppColors.accent : AppColors.textMuted),
-                          title: Text(sm.path, style: const TextStyle(fontSize: 13)),
-                          subtitle: Text(sm.commit, style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
-                        ),
-                      );
-                    },
-                  ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: submodules.isEmpty
+                  ? const Text('No submodules', style: TextStyle(color: AppColors.textMuted))
+                  : ListView.builder(
+                      itemCount: submodules.length,
+                      itemBuilder: (context, index) {
+                        final sm = submodules[index];
+                        final absolutePath = repoPath + Platform.pathSeparator + sm.path;
+                        return Padding(
+                          padding: EdgeInsets.only(bottom: index == submodules.length - 1 ? 0 : 6),
+                          child: GestureDetector(
+                            onDoubleTap: () => onOpenSubmodule(absolutePath),
+                            child: ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              leading: Icon(sm.initialized ? Icons.link : Icons.link_off, size: 16, color: sm.initialized ? AppColors.accent : AppColors.textMuted),
+                              title: Text(sm.path, style: const TextStyle(fontSize: 13)),
+                              subtitle: Text(sm.commit, style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ),
         ],
       ),

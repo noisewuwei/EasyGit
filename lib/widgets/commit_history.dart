@@ -11,6 +11,7 @@ class CommitHistoryPanel extends StatelessWidget {
   final bool detailsLoading;
   final String? detailsText;
   final ScrollController diffScrollController;
+  final ScrollController historyScrollController;
 
   const CommitHistoryPanel({
     super.key,
@@ -21,6 +22,7 @@ class CommitHistoryPanel extends StatelessWidget {
     required this.detailsLoading,
     required this.detailsText,
     required this.diffScrollController,
+    required this.historyScrollController,
   });
 
   @override
@@ -35,6 +37,7 @@ class CommitHistoryPanel extends StatelessWidget {
                 ? const Center(child: Text('No commits found.', style: TextStyle(color: AppColors.textMuted)))
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  controller: historyScrollController,
                     itemCount: recentCommits.length,
                     separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                     itemBuilder: (context, index) {
