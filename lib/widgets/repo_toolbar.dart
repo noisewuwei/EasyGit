@@ -15,6 +15,8 @@ class RepoToolbar extends StatelessWidget {
   final VoidCallback onOpenShell;
   final VoidCallback onOpenSettings;
   final VoidCallback onRefresh;
+  final void Function(String action) onMoreAction;
+  final bool rebaseInProgress;
 
   const RepoToolbar({
     super.key,
@@ -31,6 +33,8 @@ class RepoToolbar extends StatelessWidget {
     required this.onOpenShell,
     required this.onOpenSettings,
     required this.onRefresh,
+    required this.onMoreAction,
+    required this.rebaseInProgress,
   });
 
   @override
@@ -66,6 +70,38 @@ class RepoToolbar extends StatelessWidget {
           _actionButton('Push', Icons.arrow_upward, onPush, busy),
           const SizedBox(width: 8),
           _addButton(onToggleCommitOverlay, busy),
+          const SizedBox(width: 8),
+          PopupMenuButton<String>(
+            tooltip: 'More git actions',
+            onSelected: onMoreAction,
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(value: 'amend', child: Text('Amend last commit')), 
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(value: 'stash_save', child: Text('Stash save...')),
+              const PopupMenuItem<String>(value: 'stash_list', child: Text('Stash list/apply...')),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(value: 'rebase_branch', child: Text('Rebase onto branch...')),
+              PopupMenuItem<String>(value: 'rebase_continue', enabled: rebaseInProgress, child: const Text('Rebase --continue')),
+              PopupMenuItem<String>(value: 'rebase_skip', enabled: rebaseInProgress, child: const Text('Rebase --skip')),
+              PopupMenuItem<String>(value: 'rebase_abort', enabled: rebaseInProgress, child: const Text('Rebase --abort')),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.border),
+                borderRadius: BorderRadius.circular(4),
+                color: Colors.transparent,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.more_horiz, size: 16),
+                  SizedBox(width: 6),
+                  Text('More'),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(width: 8),
           IconButton(
             onPressed: busy ? null : onOpenSettings,

@@ -14,6 +14,7 @@ import 'widgets/repo_toolbar.dart';
 import 'widgets/repo_sidebar.dart';
 import 'widgets/commit_history.dart';
 import 'widgets/changes_and_diff.dart';
+import 'ui/diff_utils.dart';
 
 class RepoPage extends StatefulWidget {
   final String repoPath;
@@ -46,7 +47,6 @@ class _RepoPageState extends State<RepoPage> {
   bool _autoRefreshEnabled = true;
   static const Duration _autoRefreshInterval = Duration(seconds: 15);
   static const int _commitPageSize = 20;
-  String _log = '';
   bool _generatingCommitInfo = false;
   String _selectedCommitType = 'feature';
 
@@ -75,6 +75,7 @@ class _RepoPageState extends State<RepoPage> {
   bool _loadingMoreCommits = false;
   bool _commitHasMore = true;
   int _commitLoadedCount = 0;
+  bool _rebaseInProgress = false;
 
   @override
   void initState() {
@@ -116,6 +117,7 @@ class _RepoPageState extends State<RepoPage> {
       final tags = await _git.tags(path);
       final submodules = await _git.submodules(path);
       final aheadBehind = await _git.branchAheadBehind(path);
+      final rebaseFlag = await _git.isRebaseInProgress(path);
 
       final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
 
@@ -135,6 +137,7 @@ class _RepoPageState extends State<RepoPage> {
         _commitHasMore = history.length == _commitPageSize;
         _loadingMoreCommits = false;
         _submodules = submodules;
+        _rebaseInProgress = rebaseFlag;
         if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
           _selectedRemote = _remotes.first;
           // prefetch branches for the default remote so they show immediately
@@ -295,6 +298,267 @@ class _RepoPageState extends State<RepoPage> {
     _messageController.clear();
   }
 
+  Future<void> _amendLastCommit() async {
+    final message = await _promptAmendMessage();
+    if (message == null) return;
+    await _runGitOp(() => _git.amendLastCommit(widget.repoPath, message));
+    _messageController.clear();
+  }
+
+  Future<String?> _promptAmendMessage() async {
+    if (_busy || !mounted) return null;
+    var initial = _messageController.text.trim();
+    if (initial.isEmpty) {
+      try {
+        initial = await _git.lastCommitMessage(widget.repoPath);
+      } catch (_) {
+        initial = '';
+      }
+    }
+
+    final ctrl = TextEditingController(text: initial);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Amend last commit'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Commit message',
+            hintText: 'Leave empty to reuse previous message',
+          ),
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Amend')),
+        ],
+      ),
+    );
+
+    if (ok != true) return null;
+    final value = ctrl.text.trim();
+    _messageController.text = value;
+    return value;
+  }
+
+  Future<void> _revertSelectedCommit() async {
+    final c = _selectedCommit;
+    if (c == null) return;
+    await _runGitOp(() => _git.revertCommit(widget.repoPath, c.hash));
+  }
+
+  Future<void> _cherryPickSelectedCommit() async {
+    final c = _selectedCommit;
+    if (c == null) return;
+    await _runGitOp(() => _git.cherryPick(widget.repoPath, c.hash));
+  }
+
+  Future<void> _resetToSelected(String mode) async {
+    final c = _selectedCommit;
+    if (c == null) return;
+    await _runGitOp(() => _git.reset(widget.repoPath, c.hash, mode: mode));
+  }
+
+  Future<void> _stashSave() async {
+    String msg = '';
+    bool includeUntracked = true;
+    bool keepIndex = false;
+    if (!mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Stash save'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Message (optional)'),
+                  onChanged: (v) => msg = v,
+                ),
+                CheckboxListTile(
+                  value: includeUntracked,
+                  onChanged: (v) => includeUntracked = v ?? true,
+                  title: const Text('Include untracked'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+                CheckboxListTile(
+                  value: keepIndex,
+                  onChanged: (v) => keepIndex = v ?? false,
+                  title: const Text('Keep index'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Save')),
+          ],
+        );
+      },
+    );
+    if (ok != true) return;
+    await _runGitOp(() => _git.stashSave(widget.repoPath, msg, includeUntracked: includeUntracked, keepIndex: keepIndex));
+  }
+
+  Future<void> _showStashDialog() async {
+    if (!mounted) return;
+    final stashes = await _git.stashList(widget.repoPath);
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Stashes'),
+        content: SizedBox(
+          width: 520,
+          height: 360,
+          child: stashes.isEmpty
+              ? const Center(child: Text('No stashes'))
+              : ListView.builder(
+                  itemCount: stashes.length,
+                  itemBuilder: (context, index) {
+                    final s = stashes[index];
+                    final name = s['name'] ?? '';
+                    final msg = s['message'] ?? '';
+                    return ListTile(
+                      title: Text(name),
+                      subtitle: Text(msg),
+                      trailing: Wrap(
+                        spacing: 8,
+                        children: [
+                          IconButton(
+                            tooltip: 'Apply',
+                            icon: const Icon(Icons.check, size: 18),
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              await _runGitOp(() => _git.stashApply(widget.repoPath, name));
+                            },
+                          ),
+                          IconButton(
+                            tooltip: 'Pop',
+                            icon: const Icon(Icons.arrow_downward, size: 18),
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              await _runGitOp(() => _git.stashPop(widget.repoPath, name));
+                            },
+                          ),
+                          IconButton(
+                            tooltip: 'Drop',
+                            icon: const Icon(Icons.delete_forever, size: 18),
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              await _runGitOp(() => _git.stashDrop(widget.repoPath, name));
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await _runGitOp(() => _git.stashClear(widget.repoPath));
+            },
+            child: const Text('Clear all'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startRebaseOnSelected() async {
+    final c = _selectedCommit;
+    if (c == null) return;
+    await _runGitOp(() => _git.rebase(widget.repoPath, c.hash));
+  }
+
+  Future<void> _startRebaseOnBranch() async {
+    String? branch = _currentBranch;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Rebase onto branch'),
+          content: DropdownButtonFormField<String>(
+            value: branch,
+            items: _branches.map((b) => DropdownMenuItem<String>(value: b, child: Text(b))).toList(),
+            onChanged: (v) => branch = v,
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Rebase')),
+          ],
+        );
+      },
+    );
+    if (ok != true || branch == null || branch!.isEmpty) return;
+    await _runGitOp(() => _git.rebase(widget.repoPath, branch!));
+  }
+
+  Future<void> _rebaseContinue() async => _runGitOp(() => _git.rebaseContinue(widget.repoPath));
+  Future<void> _rebaseSkip() async => _runGitOp(() => _git.rebaseSkip(widget.repoPath));
+  Future<void> _rebaseAbort() async => _runGitOp(() => _git.rebaseAbort(widget.repoPath));
+
+  Future<void> _handleToolbarAction(String action) async {
+    switch (action) {
+      case 'amend':
+        await _amendLastCommit();
+        break;
+      case 'stash_save':
+        await _stashSave();
+        break;
+      case 'stash_list':
+        await _showStashDialog();
+        break;
+      case 'rebase_branch':
+        await _startRebaseOnBranch();
+        break;
+      case 'rebase_continue':
+        await _rebaseContinue();
+        break;
+      case 'rebase_skip':
+        await _rebaseSkip();
+        break;
+      case 'rebase_abort':
+        await _rebaseAbort();
+        break;
+    }
+  }
+
+  Future<void> _handleCommitAction(GitCommit commit, String action) async {
+    setState(() => _selectedCommit = commit);
+    switch (action) {
+      case 'revert':
+        await _runGitOp(() => _git.revertCommit(widget.repoPath, commit.hash));
+        break;
+      case 'cherry_pick':
+        await _runGitOp(() => _git.cherryPick(widget.repoPath, commit.hash));
+        break;
+      case 'reset_soft':
+        await _runGitOp(() => _git.reset(widget.repoPath, commit.hash, mode: 'soft'));
+        break;
+      case 'reset_mixed':
+        await _runGitOp(() => _git.reset(widget.repoPath, commit.hash, mode: 'mixed'));
+        break;
+      case 'reset_hard':
+        await _runGitOp(() => _git.reset(widget.repoPath, commit.hash, mode: 'hard'));
+        break;
+      case 'rebase_selected':
+        await _runGitOp(() => _git.rebase(widget.repoPath, commit.hash));
+        break;
+    }
+  }
+
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
   Future<void> _push() => _runGitOp(() => _git.push(
         widget.repoPath,
@@ -339,6 +603,94 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   void _toggleCommitOverlay() => setState(() => _commitOverlay = !_commitOverlay);
+
+  Future<void> _showHunkDialog() async {
+    if (_busy || _selectedChange == null) return;
+    final change = _selectedChange!;
+    final hunks = await _git.hunks(widget.repoPath, change.path, staged: change.staged);
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text('Hunks: ${change.path}'),
+          content: SizedBox(
+            width: 720,
+            height: 420,
+            child: hunks.isEmpty
+                ? const Center(child: Text('No hunks found'))
+                : ListView.builder(
+                    itemCount: hunks.length,
+                    itemBuilder: (context, index) {
+                      final h = hunks[index];
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(h.header, style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                              const SizedBox(height: 6),
+                              Container(
+                                color: Colors.black,
+                                padding: const EdgeInsets.all(8),
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: SelectableText.rich(
+                                    TextSpan(children: buildDiffSpans(h.patch, baseStyle: const TextStyle(fontFamily: 'Consolas', fontSize: 12, color: Colors.white))),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                children: [
+                                  if (!change.staged)
+                                    OutlinedButton.icon(
+                                      icon: const Icon(Icons.add, size: 16),
+                                      label: const Text('Stage hunk'),
+                                      onPressed: _busy
+                                          ? null
+                                          : () async {
+                                              Navigator.of(ctx).pop();
+                                              await _runGitOp(() => _git.applyPatchToIndex(widget.repoPath, h.patch));
+                                            },
+                                    ),
+                                  if (change.staged)
+                                    OutlinedButton.icon(
+                                      icon: const Icon(Icons.undo, size: 16),
+                                      label: const Text('Unstage hunk'),
+                                      onPressed: _busy
+                                          ? null
+                                          : () async {
+                                              Navigator.of(ctx).pop();
+                                              await _runGitOp(() => _git.applyPatchToIndex(widget.repoPath, h.patch, reverse: true));
+                                            },
+                                    ),
+                                  OutlinedButton.icon(
+                                    icon: const Icon(Icons.delete_sweep, size: 16),
+                                    label: const Text('Discard hunk'),
+                                    onPressed: _busy
+                                        ? null
+                                        : () async {
+                                            Navigator.of(ctx).pop();
+                                            await _runGitOp(() => _git.applyPatchToWorktree(widget.repoPath, h.patch, reverse: true));
+                                          },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close'))],
+        );
+      },
+    );
+  }
 
   Future<void> _loadRemoteBranches(String remote) async {
     if (remote.isEmpty) return;
@@ -841,6 +1193,8 @@ class _RepoPageState extends State<RepoPage> {
                   onOpenSettings: _openSettings,
                   onOpenShell: _openGitBash,
                   onRefresh: _refreshAll,
+                  onMoreAction: _handleToolbarAction,
+                  rebaseInProgress: _rebaseInProgress,
                 ),
                 if (_commitOverlay) ...[
                   SizedBox(
@@ -850,6 +1204,7 @@ class _RepoPageState extends State<RepoPage> {
                       showDetails: false,
                       selectedCommit: _selectedCommit,
                       onSelectCommit: _loadCommitDetails,
+                      onCommitAction: _handleCommitAction,
                       detailsLoading: _commitDetailsLoading,
                       detailsText: _commitDetailsText,
                       diffScrollController: _diffScrollController,
@@ -874,6 +1229,7 @@ class _RepoPageState extends State<RepoPage> {
                       onStageAll: _stageAll,
                       onUnstageAll: _unstageAll,
                       busy: _busy,
+                      onOpenHunks: _showHunkDialog,
                     ),
                   ),
                   Container(height: 1, color: AppColors.border),
@@ -897,6 +1253,7 @@ class _RepoPageState extends State<RepoPage> {
                       showDetails: true,
                       selectedCommit: _selectedCommit,
                       onSelectCommit: _loadCommitDetails,
+                      onCommitAction: _handleCommitAction,
                       detailsLoading: _commitDetailsLoading,
                       detailsText: _commitDetailsText,
                       diffScrollController: _diffScrollController,

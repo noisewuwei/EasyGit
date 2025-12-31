@@ -8,6 +8,7 @@ class CommitHistoryPanel extends StatelessWidget {
   final bool showDetails;
   final GitCommit? selectedCommit;
   final void Function(GitCommit commit) onSelectCommit;
+  final void Function(GitCommit commit, String action)? onCommitAction;
   final bool detailsLoading;
   final String? detailsText;
   final ScrollController diffScrollController;
@@ -19,6 +20,7 @@ class CommitHistoryPanel extends StatelessWidget {
     required this.showDetails,
     required this.selectedCommit,
     required this.onSelectCommit,
+    this.onCommitAction,
     required this.detailsLoading,
     required this.detailsText,
     required this.diffScrollController,
@@ -43,14 +45,18 @@ class CommitHistoryPanel extends StatelessWidget {
                     itemBuilder: (context, index) {
                       final commit = recentCommits[index];
                       final isSelected = showDetails && selectedCommit?.hash == commit.hash;
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(commit.message, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('${commit.hash} · ${commit.author} · ${commit.date}', style: const TextStyle(color: AppColors.textMuted)),
-                        dense: true,
-                        selected: isSelected,
-                        selectedTileColor: AppColors.panel,
-                        onTap: showDetails ? () => onSelectCommit(commit) : null,
+                      return GestureDetector(
+                        onSecondaryTapDown: (details) => _showCommitMenu(context, details.globalPosition, commit),
+                        onLongPress: () => _showCommitMenu(context, null, commit),
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(commit.message, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text('${commit.hash} · ${commit.author} · ${commit.date}', style: const TextStyle(color: AppColors.textMuted)),
+                          dense: true,
+                          selected: isSelected,
+                          selectedTileColor: AppColors.panel,
+                          onTap: showDetails ? () => onSelectCommit(commit) : null,
+                        ),
                       );
                     },
                   ),
@@ -121,5 +127,33 @@ class CommitHistoryPanel extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _showCommitMenu(BuildContext context, Offset? position, GitCommit commit) async {
+    if (onCommitAction == null) return;
+    final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final fallback = overlayBox != null ? overlayBox.size.center(Offset.zero) : Offset.zero;
+    final pos = position ?? fallback;
+    final rect = overlayBox != null
+        ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
+        : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: rect,
+      items: const [
+        PopupMenuItem<String>(value: 'revert', child: Text('Revert this commit')),
+        PopupMenuItem<String>(value: 'cherry_pick', child: Text('Cherry-pick this commit')),
+        PopupMenuDivider(),
+        PopupMenuItem<String>(value: 'reset_soft', child: Text('Reset (soft) to here')),
+        PopupMenuItem<String>(value: 'reset_mixed', child: Text('Reset (mixed) to here')),
+        PopupMenuItem<String>(value: 'reset_hard', child: Text('Reset (hard) to here')),
+        PopupMenuDivider(),
+        PopupMenuItem<String>(value: 'rebase_selected', child: Text('Rebase current branch onto here')),
+      ],
+    );
+
+    if (selected == null) return;
+    onCommitAction!(commit, selected);
   }
 }

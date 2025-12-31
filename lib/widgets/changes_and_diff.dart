@@ -21,6 +21,7 @@ class ChangesAndDiff extends StatelessWidget {
   final VoidCallback onStageAll;
   final VoidCallback onUnstageAll;
   final bool busy;
+  final VoidCallback? onOpenHunks;
 
   const ChangesAndDiff({
     super.key,
@@ -40,6 +41,7 @@ class ChangesAndDiff extends StatelessWidget {
     required this.onStageAll,
     required this.onUnstageAll,
     required this.busy,
+    this.onOpenHunks,
   });
 
   @override
@@ -154,15 +156,27 @@ class ChangesAndDiff extends StatelessWidget {
             color: AppColors.panel,
             border: Border(bottom: BorderSide(color: AppColors.border)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              const Text(
-                'DIFF PREVIEW',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'DIFF PREVIEW',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (selectedChange != null && onOpenHunks != null)
+                OutlinedButton.icon(
+                  onPressed: busy ? null : onOpenHunks,
+                  icon: const Icon(Icons.view_week, size: 16),
+                  label: const Text('Hunks'),
+                  style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, side: const BorderSide(color: AppColors.border)),
+                ),
             ],
           ),
         ),

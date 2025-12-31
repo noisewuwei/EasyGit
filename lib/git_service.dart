@@ -1,6 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+class GitHunk {
+  final String header;
+  final String patch;
+
+  GitHunk({required this.header, required this.patch});
+}
+
 class GitChange {
   final String path;
   final String indexStatus; // X
@@ -86,6 +93,20 @@ class GitService {
     );
   }
 
+  Future<ProcessResult> _runWithInput(List<String> args, String workingDir, String input) async {
+    final process = await Process.start(
+      'git',
+      args,
+      workingDirectory: workingDir,
+    );
+    process.stdin.write(input);
+    await process.stdin.close();
+    final stdoutText = await process.stdout.transform(utf8.decoder).join();
+    final stderrText = await process.stderr.transform(utf8.decoder).join();
+    final exit = await process.exitCode;
+    return ProcessResult(process.pid, exit, stdoutText, stderrText);
+  }
+
   Future<String> runGit(List<String> args, String workingDir) async {
     try {
       final result = await _run(args, workingDir);
@@ -125,6 +146,75 @@ class GitService {
     return await runGit(['reset', 'HEAD', '--', ...files], repoPath);
   }
 
+  Future<List<GitHunk>> hunks(String repoPath, String path, {bool staged = false}) async {
+    final args = <String>['diff', '-U0'];
+    if (staged) args.add('--cached');
+    args.addAll(['--', path]);
+    final res = await _run(args, repoPath);
+    if (res.exitCode != 0) return [];
+    final text = res.stdout.toString();
+    return _extractHunks(text);
+  }
+
+  List<GitHunk> _extractHunks(String diffText) {
+    final lines = diffText.split('\n');
+    final hunks = <GitHunk>[];
+    var fileHeader = <String>[];
+    var current = <String>[];
+
+    void flush() {
+      if (current.isEmpty) return;
+      final header = fileHeader.join('\n');
+      final patch = [...fileHeader, ...current].join('\n');
+      hunks.add(GitHunk(header: header, patch: patch + '\n'));
+      current = [];
+    }
+
+    for (final line in lines) {
+      if (line.startsWith('diff --git ')) {
+        flush();
+        fileHeader = [line];
+        continue;
+      }
+      if (line.startsWith('index ') || line.startsWith('new file mode') || line.startsWith('deleted file mode')) {
+        fileHeader.add(line);
+        continue;
+      }
+      if (line.startsWith('--- ') || line.startsWith('+++ ')) {
+        fileHeader.add(line);
+        continue;
+      }
+      if (line.startsWith('@@')) {
+        flush();
+        current = [line];
+        continue;
+      }
+      if (current.isNotEmpty) {
+        current.add(line);
+      }
+    }
+    flush();
+    return hunks;
+  }
+
+  Future<String> applyPatchToIndex(String repoPath, String patch, {bool reverse = false}) async {
+    final args = <String>['apply', '--cached', '--unidiff-zero', '--allow-empty'];
+    if (reverse) args.add('-R');
+    final res = await _runWithInput(args, repoPath, patch);
+    final out = res.stdout.toString();
+    final err = res.stderr.toString();
+    return 'git ${args.join(' ')} exit=${res.exitCode}\nSTDOUT:\n$out\nSTDERR:\n$err';
+  }
+
+  Future<String> applyPatchToWorktree(String repoPath, String patch, {bool reverse = false}) async {
+    final args = <String>['apply', '--unidiff-zero', '--allow-empty'];
+    if (reverse) args.add('-R');
+    final res = await _runWithInput(args, repoPath, patch);
+    final out = res.stdout.toString();
+    final err = res.stderr.toString();
+    return 'git ${args.join(' ')} exit=${res.exitCode}\nSTDOUT:\n$out\nSTDERR:\n$err';
+  }
+
   Future<String> commit(String repoPath, String message) async {
     if (message.trim().isEmpty) return 'Commit message is empty.';
     final commitRes = await runGit(['commit', '-m', message], repoPath);
@@ -153,10 +243,48 @@ class GitService {
     return await runGit(['merge', sourceBranch], repoPath);
   }
 
+  Future<String> revertCommit(String repoPath, String hash) async {
+    if (hash.trim().isEmpty) return 'Revert hash is empty.';
+    return await runGit(['revert', hash], repoPath);
+  }
+
+  Future<String> cherryPick(String repoPath, String hash) async {
+    if (hash.trim().isEmpty) return 'Cherry-pick hash is empty.';
+    return await runGit(['cherry-pick', hash], repoPath);
+  }
+
+  Future<String> reset(String repoPath, String target, {String mode = 'mixed'}) async {
+    if (target.trim().isEmpty) return 'Reset target is empty.';
+    final valid = {'soft', 'mixed', 'hard'};
+    final chosen = valid.contains(mode) ? mode : 'mixed';
+    return await runGit(['reset', '--$chosen', target], repoPath);
+  }
+
+  Future<String> amendLastCommit(String repoPath, String message) async {
+    // If no message is provided, reuse the existing commit message (--no-edit).
+    final trimmed = message.trim();
+    final args = trimmed.isEmpty
+        ? ['commit', '--amend', '--no-edit']
+        : ['commit', '--amend', '-m', trimmed];
+    return await runGit(args, repoPath);
+  }
+
+  Future<String> lastCommitMessage(String repoPath) async {
+    final res = await _run(['log', '-1', '--pretty=%B'], repoPath);
+    if (res.exitCode != 0) return '';
+    return res.stdout.toString().trim();
+  }
+
   Future<String> restoreFile(String repoPath, String path) async {
     if (path.trim().isEmpty) return 'Restore path is empty.';
     // Restore changes in working tree for the given file.
     return await runGit(['restore', '--worktree', '--', path], repoPath);
+  }
+
+  Future<String> restoreFileFromIndex(String repoPath, String path) async {
+    if (path.trim().isEmpty) return 'Restore path is empty.';
+    // Unstage changes for a single file without touching worktree
+    return await runGit(['checkout', 'HEAD', '--', path], repoPath);
   }
 
   Future<List<GitChange>> status(String repoPath) async {
@@ -418,6 +546,74 @@ class GitService {
       ));
     }
     return commits;
+  }
+
+  Future<List<Map<String, String>>> stashList(String repoPath) async {
+    final res = await _run(['stash', 'list'], repoPath);
+    if (res.exitCode != 0) return [];
+    final lines = res.stdout.toString().split('\n').where((l) => l.trim().isNotEmpty);
+    return lines.map((l) {
+      final colon = l.indexOf(':');
+      if (colon <= 0) return {'name': l.trim(), 'message': ''};
+      final name = l.substring(0, colon).trim();
+      final msg = l.substring(colon + 1).trim();
+      return {'name': name, 'message': msg};
+    }).toList();
+  }
+
+  Future<String> stashSave(String repoPath, String message, {bool includeUntracked = false, bool keepIndex = false}) async {
+    final args = <String>['stash', 'push'];
+    if (includeUntracked) args.add('--include-untracked');
+    if (keepIndex) args.add('--keep-index');
+    if (message.trim().isNotEmpty) {
+      args.addAll(['-m', message]);
+    }
+    return await runGit(args, repoPath);
+  }
+
+  Future<String> stashApply(String repoPath, String name) async {
+    return await runGit(['stash', 'apply', name], repoPath);
+  }
+
+  Future<String> stashPop(String repoPath, String name) async {
+    return await runGit(['stash', 'pop', name], repoPath);
+  }
+
+  Future<String> stashDrop(String repoPath, String name) async {
+    return await runGit(['stash', 'drop', name], repoPath);
+  }
+
+  Future<String> stashClear(String repoPath) async {
+    return await runGit(['stash', 'clear'], repoPath);
+  }
+
+  Future<String> rebase(String repoPath, String upstream) async {
+    if (upstream.trim().isEmpty) return 'Rebase upstream is empty.';
+    return await runGit(['rebase', upstream], repoPath);
+  }
+
+  Future<String> rebaseContinue(String repoPath) async {
+    return await runGit(['rebase', '--continue'], repoPath);
+  }
+
+  Future<String> rebaseAbort(String repoPath) async {
+    return await runGit(['rebase', '--abort'], repoPath);
+  }
+
+  Future<String> rebaseSkip(String repoPath) async {
+    return await runGit(['rebase', '--skip'], repoPath);
+  }
+
+  Future<bool> isRebaseInProgress(String repoPath) async {
+    try {
+      final merge = await _run(['rev-parse', '--git-path', 'rebase-merge'], repoPath);
+      final apply = await _run(['rev-parse', '--git-path', 'rebase-apply'], repoPath);
+      final mergeDir = merge.stdout.toString().trim();
+      final applyDir = apply.stdout.toString().trim();
+      if (mergeDir.isNotEmpty && await FileSystemEntity.isDirectory(mergeDir)) return true;
+      if (applyDir.isNotEmpty && await FileSystemEntity.isDirectory(applyDir)) return true;
+    } catch (_) {}
+    return false;
   }
 
   Future<String> diffFile(String repoPath, GitChange change) async {
