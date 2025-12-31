@@ -509,6 +509,194 @@ class _RepoPageState extends State<RepoPage> {
   Future<void> _rebaseSkip() async => _runGitOp(() => _git.rebaseSkip(widget.repoPath));
   Future<void> _rebaseAbort() async => _runGitOp(() => _git.rebaseAbort(widget.repoPath));
 
+  Future<void> _showCreateTagDialog() async {
+    if (_busy || !mounted) return;
+    String name = '';
+    String message = '';
+    String target = _selectedCommit?.hash ?? _currentBranch ?? 'HEAD';
+    bool pushAfter = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Create tag'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Tag name'),
+                  onChanged: (v) => name = v,
+                  autofocus: true,
+                ),
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Message (optional, for annotated tag)'),
+                  onChanged: (v) => message = v,
+                  maxLines: 2,
+                ),
+                TextField(
+                  decoration: const InputDecoration(labelText: 'Target (commit-ish)', hintText: 'HEAD'),
+                  controller: TextEditingController(text: target),
+                  onChanged: (v) => target = v,
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: pushAfter,
+                  onChanged: (v) => pushAfter = v ?? false,
+                  title: const Text('Push to remote after creation'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Create')),
+          ],
+        );
+      },
+    );
+    if (ok != true) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      _appendLog('Tag name cannot be empty.');
+      return;
+    }
+    final remote = _selectedRemote ?? (_remotes.contains('origin') ? 'origin' : (_remotes.isNotEmpty ? _remotes.first : ''));
+    await _runGitOp(() async {
+      final createRes = await _git.createTag(widget.repoPath, trimmed, target: target.trim().isEmpty ? 'HEAD' : target.trim(), message: message);
+      if (pushAfter && remote.isNotEmpty) {
+        final pushRes = await _git.pushTag(widget.repoPath, remote, trimmed);
+        return '$createRes\n$pushRes';
+      }
+      return createRes;
+    });
+  }
+
+  Future<void> _pushTag(String tag) async {
+    final remote = _selectedRemote ?? (_remotes.contains('origin') ? 'origin' : (_remotes.isNotEmpty ? _remotes.first : ''));
+    if (remote.isEmpty) {
+      _appendLog('No remote selected to push tag.');
+      return;
+    }
+    await _runGitOp(() => _git.pushTag(widget.repoPath, remote, tag));
+  }
+
+  Future<void> _deleteTag(String tag) async {
+    if (_busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete tag?'),
+        content: Text('Delete local tag "$tag"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _runGitOp(() => _git.deleteTag(widget.repoPath, tag));
+  }
+
+  Future<void> _deleteRemoteTag(String tag) async {
+    final remote = _selectedRemote ?? (_remotes.contains('origin') ? 'origin' : (_remotes.isNotEmpty ? _remotes.first : ''));
+    if (remote.isEmpty) {
+      _appendLog('No remote selected to delete tag.');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete remote tag?'),
+        content: Text('Delete remote tag "$tag" from $remote?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _runGitOp(() => _git.deleteRemoteTag(widget.repoPath, remote, tag));
+  }
+
+  Future<void> _showChangelogDialog({String? fromTag}) async {
+    if (_tags.isEmpty) {
+      _appendLog('No tags available for changelog.');
+      return;
+    }
+    final headLabel = 'HEAD';
+    String? start = fromTag ?? (_tags.length > 1 ? _tags[_tags.length - 2] : _tags.first);
+    String? end = headLabel;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Generate changelog'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: 'From tag'),
+                  value: start,
+                  items: _tags
+                      .map((t) => DropdownMenuItem<String>(
+                            value: t,
+                            child: Text(t),
+                          ))
+                      .toList(),
+                  onChanged: (v) => start = v,
+                ),
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: 'To tag or HEAD'),
+                  value: end,
+                  items: [..._tags, headLabel]
+                      .map((t) => DropdownMenuItem<String>(
+                            value: t,
+                            child: Text(t),
+                          ))
+                      .toList(),
+                  onChanged: (v) => end = v,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Generate')),
+          ],
+        );
+      },
+    );
+
+    if (ok != true || start == null || end == null) return;
+    if (start == end) {
+      _appendLog('Tag range cannot be the same.');
+      return;
+    }
+    final toValue = end == headLabel ? 'HEAD' : end;
+    final res = await _git.changelogBetweenTags(widget.repoPath, start!, toValue!);
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Changelog'),
+        content: SizedBox(
+          width: 520,
+          height: 400,
+          child: SingleChildScrollView(
+            child: SelectableText(res, style: const TextStyle(fontFamily: 'Consolas', fontSize: 13)),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close'))],
+      ),
+    );
+  }
+
   Future<void> _handleToolbarAction(String action) async {
     switch (action) {
       case 'amend':
@@ -555,6 +743,26 @@ class _RepoPageState extends State<RepoPage> {
         break;
       case 'rebase_selected':
         await _runGitOp(() => _git.rebase(widget.repoPath, commit.hash));
+        break;
+    }
+  }
+
+  Future<void> _handleTagAction(String tag, String action) async {
+    switch (action) {
+      case 'checkout_tag':
+        await _confirmCheckoutTag(tag);
+        break;
+      case 'push_tag':
+        await _pushTag(tag);
+        break;
+      case 'delete_tag':
+        await _deleteTag(tag);
+        break;
+      case 'delete_remote_tag':
+        await _deleteRemoteTag(tag);
+        break;
+      case 'changelog_from_tag':
+        await _showChangelogDialog(fromTag: tag);
         break;
     }
   }
@@ -1166,6 +1374,9 @@ class _RepoPageState extends State<RepoPage> {
             branchPullCounts: _branchPullCounts,
             branchPushCounts: _branchPushCounts,
             tags: _tags,
+            onCreateTag: _showCreateTagDialog,
+            onShowChangelog: _showChangelogDialog,
+            onTagAction: _handleTagAction,
             onOpenSubmodule: (p) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: p))),
             onUpdateSubmodules: () => _updateSubmodules(),
             onSelectBranch: (b) => _selectBranch(b),

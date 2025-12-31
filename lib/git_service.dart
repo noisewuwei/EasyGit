@@ -275,6 +275,55 @@ class GitService {
     return res.stdout.toString().trim();
   }
 
+  Future<String> createTag(String repoPath, String name, {String? target, String? message}) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return 'Tag name is empty.';
+    final args = <String>['tag'];
+    final msg = message?.trim() ?? '';
+    if (msg.isNotEmpty) {
+      args.addAll(['-a', trimmed, '-m', msg]);
+    } else {
+      args.add(trimmed);
+    }
+    if (target != null && target.trim().isNotEmpty) {
+      args.add(target.trim());
+    }
+    return await runGit(args, repoPath);
+  }
+
+  Future<String> deleteTag(String repoPath, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return 'Tag name is empty.';
+    return await runGit(['tag', '-d', trimmed], repoPath);
+  }
+
+  Future<String> pushTag(String repoPath, String remote, String tag) async {
+    final r = remote.trim();
+    final t = tag.trim();
+    if (r.isEmpty || t.isEmpty) return 'Remote or tag is empty.';
+    return await runGit(['push', r, t], repoPath);
+  }
+
+  Future<String> deleteRemoteTag(String repoPath, String remote, String tag) async {
+    final r = remote.trim();
+    final t = tag.trim();
+    if (r.isEmpty || t.isEmpty) return 'Remote or tag is empty.';
+    return await runGit(['push', r, ':refs/tags/$t'], repoPath);
+  }
+
+  Future<String> changelogBetweenTags(String repoPath, String fromTag, String toTag) async {
+    final from = fromTag.trim();
+    final to = toTag.trim();
+    if (from.isEmpty || to.isEmpty) return 'Tag range is empty.';
+    final args = [
+      'log',
+      '--date=short',
+      '--pretty=format:* %h %s (%an, %ad)',
+      '$from..$to',
+    ];
+    return await runGit(args, repoPath);
+  }
+
   Future<String> restoreFile(String repoPath, String path) async {
     if (path.trim().isEmpty) return 'Restore path is empty.';
     // Restore changes in working tree for the given file.

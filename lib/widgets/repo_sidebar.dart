@@ -16,6 +16,9 @@ class RepoSidebar extends StatelessWidget {
   final List<GitSubmodule> submodules;
   final String repoPath;
   final List<String> tags;
+  final VoidCallback onCreateTag;
+  final VoidCallback onShowChangelog;
+  final void Function(String tag, String action)? onTagAction;
 
   final void Function(String branch) onSelectBranch;
   final void Function(String branch) onCheckoutBranch;
@@ -41,6 +44,9 @@ class RepoSidebar extends StatelessWidget {
     required this.branchPullCounts,
     required this.branchPushCounts,
     required this.tags,
+    required this.onCreateTag,
+    required this.onShowChangelog,
+    this.onTagAction,
     required this.onSelectBranch,
     required this.onCheckoutBranch,
     required this.onShowBranchContextMenu,
@@ -171,7 +177,7 @@ class RepoSidebar extends StatelessWidget {
                         ),
             ),
           const Divider(height: 1, color: AppColors.border),
-          _sectionHeader('TAGS'),
+          _tagHeader(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             height: 160,
@@ -184,6 +190,8 @@ class RepoSidebar extends StatelessWidget {
                       return Padding(
                         padding: EdgeInsets.only(bottom: index == tags.length - 1 ? 0 : 6),
                         child: GestureDetector(
+                          onSecondaryTapDown: (d) => _showTagContextMenu(context, tag, d.globalPosition),
+                          onLongPress: () => _showTagContextMenu(context, tag, null),
                           onTap: () => onSelectTag(tag),
                           onDoubleTap: () => onCheckoutTag(tag),
                           child: ListTile(
@@ -270,6 +278,63 @@ class RepoSidebar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _tagHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 8, 8),
+      child: Row(
+        children: [
+          const Text(
+            'TAGS',
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 11,
+              letterSpacing: 1,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Generate changelog',
+            icon: const Icon(Icons.receipt_long, size: 18, color: AppColors.textPrimary),
+            onPressed: onShowChangelog,
+          ),
+          IconButton(
+            tooltip: 'Create tag',
+            icon: const Icon(Icons.add, size: 18, color: AppColors.textPrimary),
+            onPressed: onCreateTag,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showTagContextMenu(BuildContext context, String tag, Offset? position) async {
+    if (onTagAction == null) return;
+    final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final fallback = overlayBox != null ? overlayBox.size.center(Offset.zero) : Offset.zero;
+    final pos = position ?? fallback;
+    final rect = overlayBox != null
+        ? RelativeRect.fromRect(Rect.fromLTWH(pos.dx, pos.dy, 0, 0), Offset.zero & overlayBox.size)
+        : RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy);
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: rect,
+      items: const [
+        PopupMenuItem<String>(value: 'checkout_tag', child: Text('Checkout tag (detached HEAD)')),
+        PopupMenuDivider(),
+        PopupMenuItem<String>(value: 'push_tag', child: Text('Push tag')),
+        PopupMenuItem<String>(value: 'delete_tag', child: Text('Delete tag (local)')),
+        PopupMenuItem<String>(value: 'delete_remote_tag', child: Text('Delete tag (remote)')),
+        PopupMenuDivider(),
+        PopupMenuItem<String>(value: 'changelog_from_tag', child: Text('Changelog from this tag to HEAD')),
+      ],
+    );
+
+    if (selected == null) return;
+    onTagAction!(tag, selected);
   }
 }
 
