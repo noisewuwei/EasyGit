@@ -1065,11 +1065,30 @@ class _RepoPageState extends State<RepoPage> {
         }
         exe ??= 'git-bash.exe';
         await Process.start(exe, [], workingDirectory: widget.repoPath);
+      } else if (Platform.isMacOS) {
+        // 使用 AppleScript 打开终端并切换到仓库目录
+        final script = '''
+tell application "Terminal"
+  activate
+  do script "cd ${widget.repoPath.replaceAll('"', '\\"').replaceAll('\$', '\\\$')} && clear"
+end tell
+''';
+        await Process.start('osascript', ['-e', script]);
       } else {
-        await Process.start('bash', [], workingDirectory: widget.repoPath);
+        // Linux: 尝试打开常见的终端模拟器
+        final terminals = ['gnome-terminal', 'konsole', 'xterm'];
+        for (final term in terminals) {
+          try {
+            await Process.start(term, ['--working-directory=${widget.repoPath}']);
+            return;
+          } catch (_) {
+            continue;
+          }
+        }
+        _appendLog('No terminal emulator found');
       }
     } catch (e) {
-      _appendLog('Failed to open Git Bash: $e');
+      _appendLog('Failed to open terminal: $e');
     }
   }
 
