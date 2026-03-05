@@ -99,6 +99,24 @@ class _RepoPageState extends State<RepoPage> {
     print('$time - $text');
   }
 
+  Future<void> _showOpResultDialog({required String action, required bool success, required String message}) async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(success ? '$action succeeded' : '$action failed'),
+        content: success
+            ? null
+            : SingleChildScrollView(
+                child: SelectableText(message),
+              ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _refreshAll() async {
     if (_refreshing) return;
     _refreshing = true;
@@ -294,8 +312,28 @@ class _RepoPageState extends State<RepoPage> {
   Future<void> _commit() async {
     final message = _messageController.text.trim();
     if (message.isEmpty) return;
-    await _runGitOp(() => _git.commit(widget.repoPath, message));
-    _messageController.clear();
+    if (_busy) return;
+    setState(() => _busy = true);
+    var committed = false;
+    try {
+      final output = await _git.commit(widget.repoPath, message);
+      _appendLog(output);
+      committed = true;
+      await _showOpResultDialog(action: 'Commit', success: true, message: output);
+    } catch (e) {
+      _appendLog('Error: $e');
+      await _showOpResultDialog(action: 'Commit', success: false, message: e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        if (committed) {
+          _commitOverlay = false;
+          _messageController.clear();
+        }
+      });
+      await _refreshAll();
+    }
   }
 
   Future<void> _amendLastCommit() async {
@@ -665,7 +703,7 @@ class _RepoPageState extends State<RepoPage> {
                             value: t,
                             child: Text(
                               t,
-                              maxLines: 1,
+                              maxLines: 1, 
                               overflow: TextOverflow.ellipsis,
                             ),
                           ))
@@ -778,12 +816,27 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
-  Future<void> _push() => _runGitOp(() => _git.push(
+  Future<void> _push() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final output = await _git.push(
         widget.repoPath,
         remote: _selectedRemote,
         branch: _currentBranch,
         setUpstream: _selectedRemote != null && _currentBranch != null,
-      ));
+      );
+      _appendLog(output);
+      await _showOpResultDialog(action: 'Push', success: true, message: output);
+    } catch (e) {
+      _appendLog('Error: $e');
+      await _showOpResultDialog(action: 'Push', success: false, message: e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      await _refreshAll();
+    }
+  }
   Future<void> _pushBranch(String branch) => _runGitOp(() => _git.push(
         widget.repoPath,
         remote: 'origin',
