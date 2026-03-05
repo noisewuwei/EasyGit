@@ -641,23 +641,33 @@ class _RepoPageState extends State<RepoPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'From tag'),
                   value: start,
                   items: _tags
                       .map((t) => DropdownMenuItem<String>(
                             value: t,
-                            child: Text(t),
+                            child: Text(
+                              t,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ))
                       .toList(),
                   onChanged: (v) => start = v,
                 ),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'To tag or HEAD'),
                   value: end,
                   items: [..._tags, headLabel]
                       .map((t) => DropdownMenuItem<String>(
                             value: t,
-                            child: Text(t),
+                            child: Text(
+                              t,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ))
                       .toList(),
                   onChanged: (v) => end = v,
