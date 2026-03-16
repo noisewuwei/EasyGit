@@ -816,6 +816,14 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
+
+  bool _isGitOpSuccess(String output) {
+    final match = RegExp(r'exit=(\d+)').firstMatch(output);
+    if (match == null) return false;
+    final code = int.tryParse(match.group(1) ?? '');
+    return code == 0;
+  }
+
   Future<void> _push() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -827,7 +835,8 @@ class _RepoPageState extends State<RepoPage> {
         setUpstream: _selectedRemote != null && _currentBranch != null,
       );
       _appendLog(output);
-      await _showOpResultDialog(action: 'Push', success: true, message: output);
+      final success = _isGitOpSuccess(output);
+      await _showOpResultDialog(action: 'Push', success: success, message: output);
     } catch (e) {
       _appendLog('Error: $e');
       await _showOpResultDialog(action: 'Push', success: false, message: e.toString());
@@ -1698,7 +1707,7 @@ end tell
         }
       }
 
-      final prompt = '''Please generate a concise commit message (max 20 chars) based on the following diffs. Return ONLY a JSON object with keys "message".\n\n${buffers.join('\n\n---\n\n')}''';
+      final prompt = '''Please generate a concise commit message (max 50 chars) based on the following diffs. Return ONLY a JSON object with keys "message".\n\n${buffers.join('\n\n---\n\n')}''';
 
       _appendLog('Calling Deepseek to generate commit info...');
       final resp = await _callDeepseek(prompt);
