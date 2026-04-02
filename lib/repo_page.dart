@@ -45,7 +45,7 @@ class _RepoPageState extends State<RepoPage> {
   bool _refreshing = false;
   Timer? _autoRefreshTimer;
   bool _autoRefreshEnabled = true;
-  static const Duration _autoRefreshInterval = Duration(seconds: 15);
+  int _autoRefreshIntervalSeconds = 15;
   static const int _commitPageSize = 20;
   bool _generatingCommitInfo = false;
 
@@ -223,7 +223,7 @@ class _RepoPageState extends State<RepoPage> {
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
     if (!_autoRefreshEnabled) return;
-    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (timer) async {
+    _autoRefreshTimer = Timer.periodic(Duration(seconds: _autoRefreshIntervalSeconds), (timer) async {
       if (!mounted || _busy || _refreshing) return;
       await _refreshAll();
     });
@@ -1192,6 +1192,7 @@ end tell
         Map<String, String> remotesState = Map.of(remoteMap);
         bool useGlobalState = useGlobal;
         bool autoRefreshState = _autoRefreshEnabled;
+        int refreshIntervalState = _autoRefreshIntervalSeconds;
 
         return StatefulBuilder(
           builder: (context, setStateDialog) {
@@ -1310,7 +1311,7 @@ end tell
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Auto refresh'),
-                        subtitle: const Text('Refresh repository status every 15 seconds'),
+                        subtitle: Text('Refresh repository status every ${refreshIntervalState} seconds'),
                         value: autoRefreshState,
                         onChanged: saving
                             ? null
@@ -1318,6 +1319,36 @@ end tell
                                 setStateDialog(() => autoRefreshState = v);
                               },
                       ),
+                      if (autoRefreshState) ...[
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Text('Refresh interval (seconds)', style: TextStyle(fontSize: 13)),
+                                  const Spacer(),
+                                  Text('${refreshIntervalState}s', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              Slider(
+                                value: refreshIntervalState.toDouble(),
+                                min: 5,
+                                max: 60,
+                                divisions: 11,
+                                label: '${refreshIntervalState}s',
+                                onChanged: saving
+                                    ? null
+                                    : (v) {
+                                        setStateDialog(() => refreshIntervalState = v.toInt());
+                                      },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
