@@ -221,6 +221,17 @@ class GitService {
     return 'COMMIT RESULT:\n$commitRes';
   }
 
+  Future<String> fetch(String repoPath, {String? remote}) async {
+    final args = ['fetch'];
+    if (remote != null && remote.isNotEmpty) {
+      args.add(remote);
+    } else {
+      args.add('--all');
+    }
+    final res = await runGit(args, repoPath);
+    return 'FETCH RESULT:\n$res';
+  }
+
   Future<String> pull(String repoPath, {String? remote, String? branch}) async {
     final args = ['pull'];
     if (remote != null && remote.isNotEmpty) args.add(remote);

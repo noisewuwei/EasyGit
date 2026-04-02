@@ -8,6 +8,7 @@ class RepoToolbar extends StatelessWidget {
   final bool commitOverlay;
   final int changeCount;
   final VoidCallback onCreateBranch;
+  final VoidCallback onFetch;
   final VoidCallback onPull;
   final VoidCallback onPush;
   final VoidCallback onToggleCommitOverlay;
@@ -26,6 +27,7 @@ class RepoToolbar extends StatelessWidget {
     required this.commitOverlay,
     required this.changeCount,
     required this.onCreateBranch,
+    required this.onFetch,
     required this.onPull,
     required this.onPush,
     required this.onToggleCommitOverlay,
@@ -65,6 +67,8 @@ class RepoToolbar extends StatelessWidget {
           const SizedBox(width: 8),
           Text(selectedRemote ?? '-', style: const TextStyle(color: AppColors.textSecondary)),
           const Spacer(),
+          _actionButton('Fetch', Icons.cloud_download, onFetch, busy),
+          const SizedBox(width: 8),
           _actionButton('Pull', Icons.arrow_downward, onPull, busy),
           const SizedBox(width: 8),
           _actionButton('Push', Icons.arrow_upward, onPush, busy),

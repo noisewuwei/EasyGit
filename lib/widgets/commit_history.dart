@@ -3,7 +3,7 @@ import '../ui/app_colors.dart';
 import '../ui/diff_utils.dart';
 import '../git_service.dart';
 
-class CommitHistoryPanel extends StatelessWidget {
+class CommitHistoryPanel extends StatefulWidget {
   final List<GitCommit> recentCommits;
   final bool showDetails;
   final GitCommit? selectedCommit;
@@ -28,26 +28,94 @@ class CommitHistoryPanel extends StatelessWidget {
   });
 
   @override
+  State<CommitHistoryPanel> createState() => _CommitHistoryPanelState();
+}
+
+class _CommitHistoryPanelState extends State<CommitHistoryPanel> {
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<GitCommit> get _filteredCommits {
+    if (_searchQuery.isEmpty) return widget.recentCommits;
+    final query = _searchQuery.toLowerCase();
+    return widget.recentCommits.where((commit) {
+      return commit.message.toLowerCase().contains(query) ||
+             commit.author.toLowerCase().contains(query) ||
+             commit.hash.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final commits = _filteredCommits;
     final historyList = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Search bar
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: const BoxDecoration(
+            color: AppColors.panel,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Search commits (message, author, hash)...',
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _searchController.clear();
+                          _searchQuery = '';
+                        });
+                      },
+                    )
+                  : null,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value;
+              });
+            },
+          ),
+        ),
         Expanded(
           child: Container(
             color: AppColors.background,
-            child: recentCommits.isEmpty
-                ? const Center(child: Text('No commits found.', style: TextStyle(color: AppColors.textMuted)))
+            child: commits.isEmpty
+                ? Center(
+                    child: Text(
+                      _searchQuery.isEmpty ? 'No commits found.' : 'No commits match "$_searchQuery"',
+                      style: const TextStyle(color: AppColors.textMuted),
+                    ),
+                  )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  controller: historyScrollController,
-                    itemCount: recentCommits.length,
+                    controller: widget.historyScrollController,
+                    itemCount: commits.length,
                     separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.border),
                     itemBuilder: (context, index) {
-                      final commit = recentCommits[index];
-                      final isSelected = showDetails && selectedCommit?.hash == commit.hash;
+                      final commit = commits[index];
+                      final isSelected = widget.showDetails && widget.selectedCommit?.hash == commit.hash;
                       return GestureDetector(
-                        onSecondaryTapDown: (details) => _showCommitMenu(context, details.globalPosition, commit),
-                        onLongPress: () => _showCommitMenu(context, null, commit),
+                        onSecondaryTapDown: widget.onCommitAction == null
+                          ? null
+                          : (details) => _showCommitMenu(context, details.globalPosition, commit),
+                        onLongPress: widget.onCommitAction == null
+                          ? null
+                          : () => _showCommitMenu(context, null, commit),
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(commit.message, style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -55,7 +123,7 @@ class CommitHistoryPanel extends StatelessWidget {
                           dense: true,
                           selected: isSelected,
                           selectedTileColor: AppColors.panel,
-                          onTap: showDetails ? () => onSelectCommit(commit) : null,
+                          onTap: widget.showDetails ? () => widget.onSelectCommit(commit) : null,
                         ),
                       );
                     },
@@ -65,7 +133,7 @@ class CommitHistoryPanel extends StatelessWidget {
       ],
     );
 
-    if (!showDetails) {
+    if (!widget.showDetails) {
       return historyList;
     }
 
@@ -79,7 +147,7 @@ class CommitHistoryPanel extends StatelessWidget {
   }
 
   Widget _detailPanel() {
-    if (selectedCommit == null) {
+    if (widget.selectedCommit == null) {
       return Container(
         color: AppColors.background,
         alignment: Alignment.center,
@@ -98,27 +166,27 @@ class CommitHistoryPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(selectedCommit!.message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text(widget.selectedCommit!.message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('${selectedCommit!.hash} · ${selectedCommit!.author} · ${selectedCommit!.date}', style: const TextStyle(color: AppColors.textMuted)),
+              Text('${widget.selectedCommit!.hash} · ${widget.selectedCommit!.author} · ${widget.selectedCommit!.date}', style: const TextStyle(color: AppColors.textMuted)),
             ],
           ),
         ),
         Expanded(
           child: Container(
             color: Colors.black,
-            child: detailsLoading
+            child: widget.detailsLoading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                : detailsText == null
+                : widget.detailsText == null
                     ? const Center(child: Text('No details loaded.', style: TextStyle(color: AppColors.textMuted)))
                     : Scrollbar(
-                        controller: diffScrollController,
+                        controller: widget.diffScrollController,
                         thumbVisibility: true,
                         child: SingleChildScrollView(
-                          controller: diffScrollController,
+                          controller: widget.diffScrollController,
                           padding: const EdgeInsets.all(12),
                           child: SelectableText.rich(
-                            TextSpan(children: buildDiffSpans(detailsText!, baseStyle: const TextStyle(fontFamily: 'Consolas', fontSize: 12))),
+                            TextSpan(children: buildDiffSpans(widget.detailsText!, baseStyle: const TextStyle(fontFamily: 'Consolas', fontSize: 12))),
                             style: const TextStyle(fontFamily: 'Consolas', fontSize: 12),
                           ),
                         ),
@@ -130,7 +198,7 @@ class CommitHistoryPanel extends StatelessWidget {
   }
 
   Future<void> _showCommitMenu(BuildContext context, Offset? position, GitCommit commit) async {
-    if (onCommitAction == null) return;
+    if (widget.onCommitAction == null) return;
     final overlayBox = Overlay.of(context).context.findRenderObject() as RenderBox?;
     final fallback = overlayBox != null ? overlayBox.size.center(Offset.zero) : Offset.zero;
     final pos = position ?? fallback;
@@ -154,6 +222,6 @@ class CommitHistoryPanel extends StatelessWidget {
     );
 
     if (selected == null) return;
-    onCommitAction!(commit, selected);
+    widget.onCommitAction!(commit, selected);
   }
 }

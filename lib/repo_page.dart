@@ -814,6 +814,7 @@ class _RepoPageState extends State<RepoPage> {
     }
   }
 
+  Future<void> _fetch() => _runGitOp(() => _git.fetch(widget.repoPath, remote: _selectedRemote));
   Future<void> _pull() => _runGitOp(() => _git.pull(widget.repoPath, remote: _selectedRemote, branch: _currentBranch));
 
   bool _isGitOpSuccess(String output) {
@@ -1518,6 +1519,7 @@ end tell
                   commitOverlay: _commitOverlay,
                   changeCount: _changes.length,
                   onCreateBranch: _showCreateBranchDialog,
+                  onFetch: _fetch,
                   onPull: _pull,
                   onPush: _push,
                   onToggleCommitOverlay: _toggleCommitOverlay,
@@ -1659,6 +1661,18 @@ end tell
     final envKey = Platform.environment['DEEPSEEK_API_KEY'];
     if (envKey != null && envKey.trim().isNotEmpty) return envKey.trim();
     try {
+      // Try to read from .env in repository root first
+      final repoEnvFile = File('${widget.repoPath}${Platform.pathSeparator}.env');
+      if (await repoEnvFile.exists()) {
+        final contents = await repoEnvFile.readAsLines();
+        for (final line in contents) {
+          final trimmed = line.trim();
+          if (trimmed.startsWith('DEEPSEEK_API_KEY=')) {
+            return trimmed.split('=')[1].trim();
+          }
+        }
+      }
+      // Fallback to current directory .env
       final f = File('.env');
       if (!await f.exists()) return null;
       final contents = await f.readAsLines();

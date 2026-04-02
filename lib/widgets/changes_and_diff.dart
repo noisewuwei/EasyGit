@@ -146,7 +146,7 @@ class ChangesAndDiff extends StatelessWidget {
   }
 
   Widget _diffPanel() {
-    final fileName = selectedChange?.path ?? 'Select a file to preview';
+    final selectedPath = selectedChange?.path;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -158,18 +158,31 @@ class ChangesAndDiff extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'DIFF PREVIEW',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'DIFF PREVIEW',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1, color: AppColors.textMuted),
+                    ),
+                    const SizedBox(height: 4),
+                    if (selectedPath != null)
+                      Text(
+                        selectedPath,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.accent),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    else
+                      const Text(
+                        'Select a file to preview',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textMuted),
+                      ),
+                  ],
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               if (selectedChange != null && onOpenHunks != null)
                 OutlinedButton.icon(
                   onPressed: busy ? null : onOpenHunks,
