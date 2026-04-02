@@ -43,6 +43,8 @@ class _RepoPageState extends State<RepoPage> {
 
   bool _busy = false;
   bool _refreshing = false;
+  bool _refreshQueued = false;
+  Future<void>? _refreshTask;
   Timer? _autoRefreshTimer;
   bool _autoRefreshEnabled = true;
   int _autoRefreshIntervalSeconds = 15;
@@ -116,76 +118,120 @@ class _RepoPageState extends State<RepoPage> {
     );
   }
 
-  Future<void> _refreshAll() async {
-    if (_refreshing) return;
-    _refreshing = true;
-    try {
-      if (!mounted) return;
-      final path = widget.repoPath;
-      final changes = await _git.status(path);
-      final branches = await _git.branches(path);
-      final current = await _git.currentBranch(path);
-      final remotes = await _git.remotes(path);
-      var selectedBranch = _selectedBranch;
-      if (selectedBranch == null || !branches.contains(selectedBranch)) {
-        selectedBranch = current;
+  Future<void> _refreshAll() {
+    if (_refreshTask != null) {
+      _refreshQueued = true;
+      return _refreshTask!;
+    }
+    final task = _refreshAllLoop();
+    _refreshTask = task;
+    return task.whenComplete(() {
+      _refreshTask = null;
+    });
+  }
+
+  Future<void> _refreshAllLoop() async {
+    do {
+      _refreshQueued = false;
+      _refreshing = true;
+      try {
+        if (!mounted) return;
+        final path = widget.repoPath;
+        final changes = await _git.status(path);
+        final branches = await _git.branches(path);
+        final current = await _git.currentBranch(path);
+        final remotes = await _git.remotes(path);
+        var selectedBranch = _selectedBranch;
+        if (selectedBranch == null || !branches.contains(selectedBranch)) {
+          selectedBranch = current;
+        }
+        final history = await _git.recentCommits(path, branch: selectedBranch, limit: _commitPageSize, skip: 0);
+        final tags = await _git.tags(path);
+        final submodules = await _git.submodules(path);
+        final aheadBehind = await _git.branchAheadBehind(path);
+        final rebaseFlag = await _git.isRebaseInProgress(path);
+
+        final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
+
+        if (!mounted) return;
+        final prevSelectedCommit = _selectedCommit;
+        setState(() {
+          _changes = changes;
+          _branches = branches;
+          _currentBranch = current;
+          _selectedBranch = selectedBranch;
+          _tags = tags;
+          _remotes = remotes;
+          _branchPullCounts = {for (final e in aheadBehind.entries) e.key: e.value.pull};
+          _branchPushCounts = {for (final e in aheadBehind.entries) e.key: e.value.push};
+          _recentCommits = history;
+          _commitLoadedCount = history.length;
+          _commitHasMore = history.length == _commitPageSize;
+          _loadingMoreCommits = false;
+          _submodules = submodules;
+          _rebaseInProgress = rebaseFlag;
+          if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
+            _selectedRemote = _remotes.first;
+            // prefetch branches for the default remote so they show immediately
+            _remoteBranches.clear();
+            _loadRemoteBranches(_selectedRemote!);
+          }
+          if (nextSelection == null) {
+            _selectedChange = null;
+            _diffText = null;
+            _diffLoading = false;
+          } else {
+            _selectedChange = nextSelection;
+          }
+          if (prevSelectedCommit != null) {
+            final match = history.where((c) => c.hash == prevSelectedCommit.hash).toList();
+            if (match.isNotEmpty) {
+              _selectedCommit = match.first;
+            } else {
+              _selectedCommit = null;
+              _commitDetailsText = null;
+            }
+          }
+        });
+
+        if (nextSelection != null) {
+          await _previewChange(nextSelection, force: true);
+        }
+      } catch (e) {
+        _appendLog('Refresh failed: $e');
+      } finally {
+        _refreshing = false;
       }
-      final history = await _git.recentCommits(path, branch: selectedBranch, limit: _commitPageSize, skip: 0);
-      final tags = await _git.tags(path);
-      final submodules = await _git.submodules(path);
-      final aheadBehind = await _git.branchAheadBehind(path);
-      final rebaseFlag = await _git.isRebaseInProgress(path);
+    } while (_refreshQueued);
+  }
 
-      final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
+  Future<void> _refreshChangesOnly() async {
+    if (_refreshing || _refreshTask != null) {
+      _refreshQueued = true;
+      await _refreshAll();
+      return;
+    }
 
+    try {
+      final changes = await _git.status(widget.repoPath);
       if (!mounted) return;
-      final prevSelectedCommit = _selectedCommit;
+      final nextSelection = _matchChange(changes, _selectedChange) ?? (changes.isNotEmpty ? changes.first : null);
+      final prev = _selectedChange;
+      final selectionSwitched = prev == null ||
+          nextSelection == null ||
+          prev.path != nextSelection.path ||
+          prev.staged != nextSelection.staged;
+
       setState(() {
         _changes = changes;
-        _branches = branches;
-        _currentBranch = current;
-        _selectedBranch = selectedBranch;
-        _tags = tags;
-        _remotes = remotes;
-        _branchPullCounts = {for (final e in aheadBehind.entries) e.key: e.value.pull};
-        _branchPushCounts = {for (final e in aheadBehind.entries) e.key: e.value.push};
-        _recentCommits = history;
-        _commitLoadedCount = history.length;
-        _commitHasMore = history.length == _commitPageSize;
-        _loadingMoreCommits = false;
-        _submodules = submodules;
-        _rebaseInProgress = rebaseFlag;
-        if (_remotes.isNotEmpty && (_selectedRemote == null || !_remotes.contains(_selectedRemote))) {
-          _selectedRemote = _remotes.first;
-          // prefetch branches for the default remote so they show immediately
-          _remoteBranches.clear();
-          _loadRemoteBranches(_selectedRemote!);
-        }
-        if (nextSelection == null) {
-          _selectedChange = null;
-          _diffText = null;
+        _selectedChange = nextSelection;
+        if (nextSelection == null || selectionSwitched) {
           _diffLoading = false;
-        } else {
-          _selectedChange = nextSelection;
-        }
-        if (prevSelectedCommit != null) {
-          final match = history.where((c) => c.hash == prevSelectedCommit.hash).toList();
-          if (match.isNotEmpty) {
-            _selectedCommit = match.first;
-          } else {
-            _selectedCommit = null;
-            _commitDetailsText = null;
-          }
+          _diffText = null;
         }
       });
-
-      if (nextSelection != null) {
-        await _previewChange(nextSelection, force: true);
-      }
     } catch (e) {
-      _appendLog('Refresh failed: $e');
-    } finally {
-      _refreshing = false;
+      _appendLog('Light refresh failed: $e');
     }
   }
 
@@ -264,7 +310,7 @@ class _RepoPageState extends State<RepoPage> {
     }
   }
 
-  Future<void> _runGitOp(Future<String> Function() op) async {
+  Future<void> _runGitOp(Future<String> Function() op, {bool fullRefresh = true}) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
@@ -275,18 +321,22 @@ class _RepoPageState extends State<RepoPage> {
     } finally {
       if (!mounted) return;
       setState(() => _busy = false);
-      await _refreshAll();
+      if (fullRefresh) {
+        await _refreshAll();
+      } else {
+        await _refreshChangesOnly();
+      }
     }
   }
 
-  Future<void> _stage(GitChange change) => _runGitOp(() => _git.addFiles(widget.repoPath, [change.path]));
-  Future<void> _unstage(GitChange change) => _runGitOp(() => _git.unstageFiles(widget.repoPath, [change.path]));
-  Future<void> _stageAll() => _runGitOp(() => _git.addAll(widget.repoPath));
+  Future<void> _stage(GitChange change) => _runGitOp(() => _git.addFiles(widget.repoPath, [change.path]), fullRefresh: false);
+  Future<void> _unstage(GitChange change) => _runGitOp(() => _git.unstageFiles(widget.repoPath, [change.path]), fullRefresh: false);
+  Future<void> _stageAll() => _runGitOp(() => _git.addAll(widget.repoPath), fullRefresh: false);
 
   Future<void> _unstageAll() async {
     final stagedPaths = _changes.where((c) => c.staged).map((c) => c.path).toList();
     if (stagedPaths.isEmpty) return;
-    await _runGitOp(() => _git.unstageFiles(widget.repoPath, stagedPaths));
+    await _runGitOp(() => _git.unstageFiles(widget.repoPath, stagedPaths), fullRefresh: false);
   }
 
   Future<void> _restoreChange(GitChange change) async {
@@ -305,7 +355,7 @@ class _RepoPageState extends State<RepoPage> {
       },
     );
     if (confirm != true) return;
-    await _runGitOp(() => _git.restoreFile(widget.repoPath, change.path));
+    await _runGitOp(() => _git.restoreFile(widget.repoPath, change.path), fullRefresh: false);
   }
 
   Future<void> _commit() async {
@@ -1074,7 +1124,7 @@ class _RepoPageState extends State<RepoPage> {
   }
 
   Future<void> _markConflictResolved(GitChange change) async {
-    await _runGitOp(() => _git.markConflictResolved(widget.repoPath, change.path));
+    await _runGitOp(() => _git.markConflictResolved(widget.repoPath, change.path), fullRefresh: false);
   }
 
   Future<void> _updateSubmodules() async {
