@@ -1212,6 +1212,21 @@ end tell
 
         return StatefulBuilder(
           builder: (context, setStateDialog) {
+          final currentProxyValue = hasLocalProxy
+            ? (localHttpProxy?.trim().isNotEmpty ?? false)
+              ? localHttpProxy!.trim()
+              : (localHttpsProxy ?? '').trim()
+            : (globalHttpProxy?.trim().isNotEmpty ?? false)
+              ? globalHttpProxy!.trim()
+              : (globalHttpsProxy ?? '').trim();
+          final currentProxySource = currentProxyValue.isEmpty
+            ? 'None'
+            : (hasLocalProxy ? 'Local' : 'Global');
+          final pendingProxyValue = proxyCtrl.text.trim();
+          final pendingProxySource = (!enableProxyState || pendingProxyValue.isEmpty)
+            ? 'None'
+            : (useGlobalProxyState ? 'Global' : 'Local');
+
             Future<void> addOrEditRemote({String? name, String? url}) async {
               final nameC = TextEditingController(text: name ?? '');
               final urlC = TextEditingController(text: url ?? '');
@@ -1283,22 +1298,24 @@ end tell
                 }
 
                 final proxy = proxyCtrl.text.trim();
-                if (useGlobalProxyState) {
-                  if (enableProxyState && proxy.isNotEmpty) {
-                    await _git.setConfig(repoPath, 'http.proxy', proxy, global: true);
-                    await _git.setConfig(repoPath, 'https.proxy', proxy, global: true);
-                  } else {
-                    await _git.unsetConfig(repoPath, 'http.proxy', global: true);
-                    await _git.unsetConfig(repoPath, 'https.proxy', global: true);
-                  }
+                if (!enableProxyState || proxy.isEmpty) {
+                  // Disable/remove should clear proxy from both scopes.
+                  await _git.unsetConfig(repoPath, 'http.proxy');
+                  await _git.unsetConfig(repoPath, 'https.proxy');
+                  await _git.unsetConfig(repoPath, 'http.proxy', global: true);
+                  await _git.unsetConfig(repoPath, 'https.proxy', global: true);
+                } else if (useGlobalProxyState) {
+                  // Use global only; clear local to avoid scope conflicts on next load.
+                  await _git.unsetConfig(repoPath, 'http.proxy');
+                  await _git.unsetConfig(repoPath, 'https.proxy');
+                  await _git.setConfig(repoPath, 'http.proxy', proxy, global: true);
+                  await _git.setConfig(repoPath, 'https.proxy', proxy, global: true);
                 } else {
-                  if (enableProxyState && proxy.isNotEmpty) {
-                    await _git.setConfig(repoPath, 'http.proxy', proxy);
-                    await _git.setConfig(repoPath, 'https.proxy', proxy);
-                  } else {
-                    await _git.unsetConfig(repoPath, 'http.proxy');
-                    await _git.unsetConfig(repoPath, 'https.proxy');
-                  }
+                  // Use local only; clear global to avoid stale proxy appearing active.
+                  await _git.unsetConfig(repoPath, 'http.proxy', global: true);
+                  await _git.unsetConfig(repoPath, 'https.proxy', global: true);
+                  await _git.setConfig(repoPath, 'http.proxy', proxy);
+                  await _git.setConfig(repoPath, 'https.proxy', proxy);
                 }
               } finally {
                 setStateDialog(() => saving = false);
@@ -1410,6 +1427,30 @@ end tell
                       const Divider(height: 24),
                       const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.panel,
+                          border: Border.all(color: AppColors.border),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Current effective: $currentProxySource${currentProxyValue.isEmpty ? '' : ' ($currentProxyValue)'}',
+                              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Will apply on save: $pendingProxySource${pendingProxyValue.isEmpty ? '' : ' ($pendingProxyValue)'}',
+                              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Enable Git proxy'),
@@ -1438,6 +1479,7 @@ end tell
                       TextField(
                         controller: proxyCtrl,
                         enabled: enableProxyState && !saving,
+                        onChanged: (_) => setStateDialog(() {}),
                         decoration: const InputDecoration(
                           labelText: 'Proxy URL',
                           hintText: 'http://127.0.0.1:7890 or socks5h://127.0.0.1:7890',
