@@ -1179,10 +1179,23 @@ end tell
     final globalEmail = await _git.getConfig(repoPath, 'user.email', global: true) ?? '';
     final localName = await _git.getConfig(repoPath, 'user.name');
     final localEmail = await _git.getConfig(repoPath, 'user.email');
+    final localHttpProxy = await _git.getConfig(repoPath, 'http.proxy');
+    final localHttpsProxy = await _git.getConfig(repoPath, 'https.proxy');
+    final globalHttpProxy = await _git.getConfig(repoPath, 'http.proxy', global: true);
+    final globalHttpsProxy = await _git.getConfig(repoPath, 'https.proxy', global: true);
     bool useGlobal = true;
 
     final nameCtrl = TextEditingController(text: localName ?? '');
     final emailCtrl = TextEditingController(text: localEmail ?? '');
+    final hasLocalProxy = (localHttpProxy?.trim().isNotEmpty ?? false) || (localHttpsProxy?.trim().isNotEmpty ?? false);
+    final defaultProxy = hasLocalProxy
+      ? (localHttpProxy?.trim().isNotEmpty ?? false)
+        ? localHttpProxy!.trim()
+        : (localHttpsProxy ?? '').trim()
+      : (globalHttpProxy?.trim().isNotEmpty ?? false)
+        ? globalHttpProxy!.trim()
+        : (globalHttpsProxy ?? '').trim();
+    final proxyCtrl = TextEditingController(text: defaultProxy);
 
     if (!mounted) return;
 
@@ -1194,6 +1207,8 @@ end tell
         bool useGlobalState = useGlobal;
         bool autoRefreshState = _autoRefreshEnabled;
         int refreshIntervalState = _autoRefreshIntervalSeconds;
+        bool useGlobalProxyState = !hasLocalProxy;
+        bool enableProxyState = defaultProxy.isNotEmpty;
 
         return StatefulBuilder(
           builder: (context, setStateDialog) {
@@ -1265,6 +1280,25 @@ end tell
                 } else {
                   await _git.setConfig(repoPath, 'user.name', nameCtrl.text.trim());
                   await _git.setConfig(repoPath, 'user.email', emailCtrl.text.trim());
+                }
+
+                final proxy = proxyCtrl.text.trim();
+                if (useGlobalProxyState) {
+                  if (enableProxyState && proxy.isNotEmpty) {
+                    await _git.setConfig(repoPath, 'http.proxy', proxy, global: true);
+                    await _git.setConfig(repoPath, 'https.proxy', proxy, global: true);
+                  } else {
+                    await _git.unsetConfig(repoPath, 'http.proxy', global: true);
+                    await _git.unsetConfig(repoPath, 'https.proxy', global: true);
+                  }
+                } else {
+                  if (enableProxyState && proxy.isNotEmpty) {
+                    await _git.setConfig(repoPath, 'http.proxy', proxy);
+                    await _git.setConfig(repoPath, 'https.proxy', proxy);
+                  } else {
+                    await _git.unsetConfig(repoPath, 'http.proxy');
+                    await _git.unsetConfig(repoPath, 'https.proxy');
+                  }
                 }
               } finally {
                 setStateDialog(() => saving = false);
@@ -1373,6 +1407,57 @@ end tell
                         enabled: !useGlobalState && !saving,
                         decoration: const InputDecoration(labelText: 'Email'),
                       ),
+                      const Divider(height: 24),
+                      const Text('Proxy', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Enable Git proxy'),
+                        subtitle: const Text('Apply proxy for both http.proxy and https.proxy'),
+                        value: enableProxyState,
+                        onChanged: saving
+                            ? null
+                            : (v) {
+                                setStateDialog(() => enableProxyState = v);
+                              },
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Use global proxy config'),
+                        subtitle: Text(
+                          'Local: ${(localHttpProxy ?? localHttpsProxy ?? '').trim().isEmpty ? "(unset)" : (localHttpProxy ?? localHttpsProxy ?? '').trim()}\n'
+                          'Global: ${(globalHttpProxy ?? globalHttpsProxy ?? '').trim().isEmpty ? "(unset)" : (globalHttpProxy ?? globalHttpsProxy ?? '').trim()}',
+                        ),
+                        value: useGlobalProxyState,
+                        onChanged: saving
+                            ? null
+                            : (v) {
+                                setStateDialog(() => useGlobalProxyState = v ?? true);
+                              },
+                      ),
+                      TextField(
+                        controller: proxyCtrl,
+                        enabled: enableProxyState && !saving,
+                        decoration: const InputDecoration(
+                          labelText: 'Proxy URL',
+                          hintText: 'http://127.0.0.1:7890 or socks5h://127.0.0.1:7890',
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: saving
+                              ? null
+                              : () {
+                                  setStateDialog(() {
+                                    enableProxyState = false;
+                                    proxyCtrl.clear();
+                                  });
+                                },
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Remove proxy (clear current scope)'),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1390,6 +1475,7 @@ end tell
                           if (mounted) {
                             setState(() {
                               _autoRefreshEnabled = autoRefreshState;
+                              _autoRefreshIntervalSeconds = refreshIntervalState;
                             });
                             if (_autoRefreshEnabled) {
                               _startAutoRefresh();
