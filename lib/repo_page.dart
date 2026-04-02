@@ -48,7 +48,6 @@ class _RepoPageState extends State<RepoPage> {
   static const Duration _autoRefreshInterval = Duration(seconds: 15);
   static const int _commitPageSize = 20;
   bool _generatingCommitInfo = false;
-  String _selectedCommitType = 'feature';
 
   List<GitChange> _changes = [];
   List<String> _branches = [];
@@ -1539,9 +1538,6 @@ end tell
                     height: 220,
                     child: CommitPanel(
                       messageController: _messageController,
-                      commitTypes: _commitTypes,
-                      selectedCommitType: _selectedCommitType,
-                      onSelectedCommitTypeChanged: (v) => setState(() => _selectedCommitType = v),
                       generating: _generatingCommitInfo,
                       busy: _busy,
                       onGenerate: _generateCommitInfo,
@@ -1707,7 +1703,44 @@ end tell
         }
       }
 
-      final prompt = '''Please generate a concise commit message (max 50 chars) based on the following diffs. Return ONLY a JSON object with keys "message".\n\n${buffers.join('\n\n---\n\n')}''';
+      final commitTypesList = _commitTypes.join(', ');
+      final prompt = '''Based on the following diffs, generate a detailed yet concise commit message with an appropriate type prefix.
+
+Available commit types: $commitTypesList
+
+Rules:
+1. Analyze the changes carefully and choose the MOST appropriate type
+2. Format: "type: <what changed> and <why/impact if relevant>"
+3. Be specific about WHAT was changed (file, component, or functionality)
+4. Include the WHY or IMPACT if it adds important context
+5. Keep it under 30 words total
+6. Use imperative mood (e.g., "add", "fix", "refactor" not "added", "fixed", "refactored")
+7. Return ONLY a JSON object with key "message"
+
+Guidelines for choosing type:
+- init: Initial commit or project setup
+- feature: New functionality or enhancement
+- fix: Bug fixes or error corrections
+- refactor: Code restructuring without behavior change
+- log: Logging improvements
+- perf: Performance improvements
+- test: Adding or updating tests
+- style: Code formatting or style changes
+- upsub: Update submodules or dependencies
+
+Examples of good commit messages:
+- "feature: add user authentication with JWT tokens for secure session management"
+- "fix: resolve memory leak in image loading by properly disposing cached instances"
+- "refactor: extract database queries into repository pattern for better testability"
+- "perf: optimize list rendering by implementing lazy loading and virtualization"
+
+Examples of bad commit messages (too vague):
+- "fix: bug fix"
+- "feature: update code"
+- "refactor: changes"
+
+Diffs:
+${buffers.join('\n\n---\n\n')}''';
 
       _appendLog('Calling Deepseek to generate commit info...');
       final resp = await _callDeepseek(prompt);
@@ -1749,32 +1782,6 @@ end tell
 
       String msg = (aiMessage ?? content).trim();
       msg = msg.replaceAll(RegExp(r'[\r\n]+'), ' ').replaceAll(RegExp(r'\s+'), ' ');
-
-      final prefix = _selectedCommitType.trim();
-      if (prefix.isNotEmpty) {
-        final lower = msg.toLowerCase();
-        for (final t in _commitTypes) {
-          final t1 = '$t:';
-          final t2 = '$t：';
-          if (lower.startsWith(t1) || lower.startsWith(t2)) {
-            final idx1 = msg.indexOf(':');
-            final idx2 = msg.indexOf('：');
-            int cut = -1;
-            if (idx1 == -1) {
-              cut = idx2;
-            } else if (idx2 == -1) {
-              cut = idx1;
-            } else {
-              cut = idx1 < idx2 ? idx1 : idx2;
-            }
-            if (cut != -1) {
-              msg = msg.substring(cut + 1).trimLeft();
-            }
-            break;
-          }
-        }
-        msg = '$prefix: ' + msg;
-      }
 
       _messageController.text = msg;
       _appendLog('Inserted AI-generated commit message.');

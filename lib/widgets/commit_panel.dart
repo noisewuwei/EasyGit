@@ -3,9 +3,6 @@ import '../ui/app_colors.dart';
 
 class CommitPanel extends StatelessWidget {
   final TextEditingController messageController;
-  final List<String> commitTypes;
-  final String selectedCommitType;
-  final ValueChanged<String> onSelectedCommitTypeChanged;
   final bool generating;
   final bool busy;
   final VoidCallback onGenerate;
@@ -14,9 +11,6 @@ class CommitPanel extends StatelessWidget {
   const CommitPanel({
     super.key,
     required this.messageController,
-    required this.commitTypes,
-    required this.selectedCommitType,
-    required this.onSelectedCommitTypeChanged,
     required this.generating,
     required this.busy,
     required this.onGenerate,
@@ -30,37 +24,6 @@ class CommitPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              const Text('Type', style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(width: 12),
-              Flexible(
-                child: FractionallySizedBox(
-                  widthFactor: 0.33,
-                  child: DropdownButtonFormField<String>(
-                    value: selectedCommitType,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Commit type',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    ),
-                    items: commitTypes
-                        .map((t) => DropdownMenuItem<String>(value: t, child: Text(t)))
-                        .toList(),
-                    onChanged: (busy || generating)
-                        ? null
-                        : (value) {
-                            if (value != null) {
-                              onSelectedCommitTypeChanged(value);
-                            }
-                          },
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
           Expanded(
             child: TextField(
               controller: messageController,
