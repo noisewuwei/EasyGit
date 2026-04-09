@@ -39,6 +39,7 @@ dependencies:
   shared_preferences: ^2.2.3
   window_manager: ^0.3.8
   flutter_launcher_icons: ^0.13.1
+  desktop_multi_window: ^0.3.0
 
 dev_dependencies:
   flutter_test:

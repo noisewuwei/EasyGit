@@ -47,92 +47,109 @@ class RepoToolbar extends StatelessWidget {
         color: AppColors.panel,
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.call_split, size: 16, color: AppColors.textMuted),
-          const SizedBox(width: 8),
-          Text(currentBranch ?? '-', style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: busy ? null : onCreateBranch,
-            icon: const Icon(Icons.fork_right, size: 14),
-            label: const Text('New'),
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            ),
-          ),
-          const SizedBox(width: 24),
-          const Icon(Icons.cloud_outlined, size: 16, color: AppColors.textMuted),
-          const SizedBox(width: 8),
-          Text(selectedRemote ?? '-', style: const TextStyle(color: AppColors.textSecondary)),
-          const Spacer(),
-          _actionButton('Fetch', Icons.cloud_download, onFetch, busy),
-          const SizedBox(width: 8),
-          _actionButton('Pull', Icons.arrow_downward, onPull, busy),
-          const SizedBox(width: 8),
-          _actionButton('Push', Icons.arrow_upward, onPush, busy),
-          const SizedBox(width: 8),
-          _addButton(onToggleCommitOverlay, busy),
-          const SizedBox(width: 8),
-          PopupMenuButton<String>(
-            tooltip: 'More git actions',
-            onSelected: onMoreAction,
-            itemBuilder: (context) => [
-              const PopupMenuItem<String>(value: 'amend', child: Text('Amend last commit')), 
-              const PopupMenuDivider(),
-              const PopupMenuItem<String>(value: 'stash_save', child: Text('Stash save...')),
-              const PopupMenuItem<String>(value: 'stash_list', child: Text('Stash list/apply...')),
-              const PopupMenuDivider(),
-              const PopupMenuItem<String>(value: 'rebase_branch', child: Text('Rebase onto branch...')),
-              PopupMenuItem<String>(value: 'rebase_continue', enabled: rebaseInProgress, child: const Text('Rebase --continue')),
-              PopupMenuItem<String>(value: 'rebase_skip', enabled: rebaseInProgress, child: const Text('Rebase --skip')),
-              PopupMenuItem<String>(value: 'rebase_abort', enabled: rebaseInProgress, child: const Text('Rebase --abort')),
-            ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(4),
-                color: Colors.transparent,
-              ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final leading = _buildLeadingWidgets();
+          final actions = _buildActionWidgets();
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.more_horiz, size: 16),
-                  SizedBox(width: 6),
-                  Text('More'),
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(mainAxisSize: MainAxisSize.min, children: leading),
+                  const SizedBox(width: 16),
+                  Row(mainAxisSize: MainAxisSize.min, children: actions),
                 ],
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: busy ? null : onOpenSettings,
-            icon: const Icon(Icons.settings, size: 18),
-            tooltip: 'Settings',
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: busy ? null : onOpenRemote,
-            icon: const Icon(Icons.open_in_new, size: 18),
-            tooltip: 'Open remote',
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: busy ? null : onOpenShell,
-            icon: const Icon(Icons.terminal, size: 18),
-            tooltip: 'Open Git Bash',
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: busy ? null : onRefresh,
-            icon: const Icon(Icons.refresh, size: 18),
-            tooltip: 'Refresh',
-          ),
-        ],
+          );
+        },
       ),
     );
+  }
+
+  List<Widget> _buildLeadingWidgets() {
+    return [
+      const Icon(Icons.call_split, size: 16, color: AppColors.textMuted),
+      const SizedBox(width: 8),
+      Text(currentBranch ?? '-', style: const TextStyle(fontWeight: FontWeight.bold)),
+      const SizedBox(width: 8),
+      OutlinedButton.icon(
+        onPressed: busy ? null : onCreateBranch,
+        icon: const Icon(Icons.fork_right, size: 14),
+        label: const Text('New'),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        ),
+      ),
+      const SizedBox(width: 24),
+      const Icon(Icons.cloud_outlined, size: 16, color: AppColors.textMuted),
+      const SizedBox(width: 8),
+      Text(selectedRemote ?? '-', style: const TextStyle(color: AppColors.textSecondary)),
+    ];
+  }
+
+  List<Widget> _buildActionWidgets() {
+    return [
+      _actionButton('Fetch', Icons.cloud_download, onFetch, busy),
+      _actionButton('Pull', Icons.arrow_downward, onPull, busy),
+      _actionButton('Push', Icons.arrow_upward, onPush, busy),
+      _addButton(onToggleCommitOverlay, busy),
+      PopupMenuButton<String>(
+        tooltip: 'More git actions',
+        onSelected: onMoreAction,
+        itemBuilder: (context) => [
+          const PopupMenuItem<String>(value: 'amend', child: Text('Amend last commit')),
+          const PopupMenuDivider(),
+          const PopupMenuItem<String>(value: 'stash_save', child: Text('Stash save...')),
+          const PopupMenuItem<String>(value: 'stash_list', child: Text('Stash list/apply...')),
+          const PopupMenuDivider(),
+          const PopupMenuItem<String>(value: 'rebase_branch', child: Text('Rebase onto branch...')),
+          PopupMenuItem<String>(value: 'rebase_continue', enabled: rebaseInProgress, child: const Text('Rebase --continue')),
+          PopupMenuItem<String>(value: 'rebase_skip', enabled: rebaseInProgress, child: const Text('Rebase --skip')),
+          PopupMenuItem<String>(value: 'rebase_abort', enabled: rebaseInProgress, child: const Text('Rebase --abort')),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(4),
+            color: Colors.transparent,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.more_horiz, size: 16),
+              SizedBox(width: 6),
+              Text('More'),
+            ],
+          ),
+        ),
+      ),
+      IconButton(
+        onPressed: busy ? null : onOpenSettings,
+        icon: const Icon(Icons.settings, size: 18),
+        tooltip: 'Settings',
+      ),
+      IconButton(
+        onPressed: busy ? null : onOpenRemote,
+        icon: const Icon(Icons.open_in_new, size: 18),
+        tooltip: 'Open remote',
+      ),
+      IconButton(
+        onPressed: busy ? null : onOpenShell,
+        icon: const Icon(Icons.terminal, size: 18),
+        tooltip: 'Open Git Bash',
+      ),
+      IconButton(
+        onPressed: busy ? null : onRefresh,
+        icon: const Icon(Icons.refresh, size: 18),
+        tooltip: 'Refresh',
+      ),
+    ];
   }
 
   Widget _actionButton(String label, IconData icon, VoidCallback onPressed, bool busy) {

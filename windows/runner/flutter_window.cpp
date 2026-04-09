@@ -4,6 +4,19 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+#include <desktop_multi_window/desktop_multi_window_plugin.h>
+#include <file_selector_windows/file_selector_windows.h>
+#include <screen_retriever/screen_retriever_plugin.h>
+#include <window_manager/window_manager_plugin.h>
+
+void OnWindowCreated(void *flutter_view_controller)
+{
+    auto *controller = reinterpret_cast<flutter::FlutterViewController *>(flutter_view_controller);
+    FileSelectorWindowsRegisterWithRegistrar(controller->engine()->GetRegistrarForPlugin("FileSelectorWindows"));
+    ScreenRetrieverPluginRegisterWithRegistrar(controller->engine()->GetRegistrarForPlugin("ScreenRetrieverPlugin"));
+    WindowManagerPluginRegisterWithRegistrar(controller->engine()->GetRegistrarForPlugin("WindowManagerPlugin"));
+}
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
@@ -13,6 +26,8 @@ bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
   }
+
+  DesktopMultiWindowSetWindowCreatedCallback(OnWindowCreated);
 
   RECT frame = GetClientArea();
 
@@ -28,7 +43,7 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    // this->Show();
   });
 
   // Flutter can complete the first frame before the "show window" callback is

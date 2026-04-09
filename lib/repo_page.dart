@@ -18,7 +18,9 @@ import 'ui/diff_utils.dart';
 
 class RepoPage extends StatefulWidget {
   final String repoPath;
-  const RepoPage({super.key, required this.repoPath});
+  /// Non-null when this page is running inside a [DesktopMultiWindow] sub-window.
+  final String? windowId;
+  const RepoPage({super.key, required this.repoPath, this.windowId});
 
   @override
   State<RepoPage> createState() => _RepoPageState();
@@ -93,6 +95,16 @@ class _RepoPageState extends State<RepoPage> {
     _diffScrollController.dispose();
     _historyScrollController.dispose();
     super.dispose();
+  }
+
+  String get _repoName {
+    var path = widget.repoPath.trim();
+    while (path.endsWith(Platform.pathSeparator)) {
+      path = path.substring(0, path.length - 1);
+    }
+    if (path.isEmpty) return 'Repository';
+    final parts = path.split(Platform.pathSeparator).where((p) => p.isNotEmpty).toList();
+    return parts.isEmpty ? 'Repository' : parts.last;
   }
 
   void _appendLog(String text) {
@@ -1592,10 +1604,11 @@ end tell
 
   @override
   Widget build(BuildContext context) {
-    final repoName = widget.repoPath.split(Platform.pathSeparator).last;
+    final repoName = _repoName;
     final unstaged = _changes.where((c) => !c.staged).toList();
     final staged = _changes.where((c) => c.staged).toList();
     final canPop = Navigator.of(context).canPop();
+    final showCustomWindowControls = isDesktop && !Platform.isMacOS;
 
     return Scaffold(
       appBar: AppBar(
@@ -1656,7 +1669,7 @@ end tell
               padding: EdgeInsets.only(right: 8),
               child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
             ),
-          if (isDesktop && !Platform.isMacOS) const WindowControls(),
+          if (showCustomWindowControls) const WindowControls(),
         ],
       ),
       body: Row(

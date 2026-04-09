@@ -1,5 +1,8 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
@@ -10,13 +13,50 @@ import 'ui/app_theme.dart';
 import 'ui/window_controls.dart';
 import 'utils/platform_utils.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
   if (isDesktop) {
     await windowManager.ensureInitialized();
+
+    // 通过当前引擎的 arguments 判断是主窗口还是子窗口
+    final windowController = await WindowController.fromCurrentEngine();
+    final argumentStr = windowController.arguments;
+
+    if (argumentStr.isNotEmpty) {
+      // 子窗口：显示一个仓库
+      final argument = jsonDecode(argumentStr) as Map<String, dynamic>;
+      final repoPath = (argument['repoPath'] as String?) ?? '';
+      final repoName = repoPath.isNotEmpty
+          ? repoPath.split(Platform.pathSeparator).last
+          : 'Repository';
+
+      const windowOptions = WindowOptions(
+        size: Size(1760, 960),
+        minimumSize: Size(1760, 960),
+        center: true,
+        titleBarStyle: TitleBarStyle.hidden,
+        backgroundColor: Colors.transparent,
+      );
+      windowManager.waitUntilReadyToShow(windowOptions, () async {
+        await windowManager.setTitle(repoName);
+        await windowManager.show();
+        await windowManager.focus();
+      });
+
+      runApp(MaterialApp(
+        title: repoName,
+        theme: AppTheme.dark,
+        debugShowCheckedModeBanner: false,
+        home: RepoPage(repoPath: repoPath, windowId: windowController.windowId),
+      ));
+      return;
+    }
+
+    // 主窗口
     const windowOptions = WindowOptions(
-      size: Size(1400, 900),
-      minimumSize: Size(1400, 900),
+      size: Size(1200, 800),
+      minimumSize: Size(1200, 800),
       center: true,
       titleBarStyle: TitleBarStyle.hidden,
       backgroundColor: Colors.transparent,
@@ -26,6 +66,7 @@ Future<void> main() async {
       await windowManager.focus();
     });
   }
+
   runApp(const MyApp());
 }
 
@@ -63,8 +104,17 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<String> _repos = [];
   String? _activeRepo;
 
-  void _openRepo(String path) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: path)));
+  void _openRepo(String path) async {
+    if (isDesktop) {
+      await WindowController.create(WindowConfiguration(
+        arguments: jsonEncode({'repoPath': path}),
+        hiddenAtLaunch: true,
+      ));
+    } else {
+      if (!mounted) return;
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => RepoPage(repoPath: path)));
+    }
   }
 
   @override
