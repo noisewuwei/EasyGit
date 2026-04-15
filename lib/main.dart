@@ -209,7 +209,6 @@ class _MyHomePageState extends State<MyHomePage> {
     if (!_repos.contains(path)) {
       setState(() {
         _repos.add(path);
-        _activeRepo = path;
       });
       await _saveRepos();
       Navigator.of(dialogCtx).pop();
@@ -317,27 +316,44 @@ class _MyHomePageState extends State<MyHomePage> {
                 itemBuilder: (ctx, i) {
                   final path = filtered[i];
                   final name = path.split(Platform.pathSeparator).last;
-                  return ListTile(
-                    leading: const Icon(Icons.folder),
-                    title: Text(name),
-                    subtitle: Text(path),
-                    onTap: () => _openRepo(path),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ElevatedButton(onPressed: () => _openRepo(path), child: const Text('Open')),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          tooltip: 'Remove',
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () async {
-                            setState(() {
-                              _repos.remove(path);
-                            });
-                            await _saveRepos();
-                          },
-                        ),
-                      ],
+                  final isSelected = _activeRepo == path;
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: () {
+                      setState(() {
+                        _activeRepo = path;
+                      });
+                      _openRepo(path);
+                    },
+                    child: ListTile(
+                      leading: const Icon(Icons.folder),
+                      title: Text(name),
+                      subtitle: Text(path),
+                      selected: isSelected,
+                      selectedTileColor: Theme.of(context).colorScheme.primary.withOpacity(0.12),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () => _openRepo(path),
+                            child: const Text('Open'),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: 'Remove',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              setState(() {
+                                _repos.remove(path);
+                                if (_activeRepo == path) {
+                                  _activeRepo = null;
+                                }
+                              });
+                              await _saveRepos();
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },

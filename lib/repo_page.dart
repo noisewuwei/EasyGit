@@ -788,22 +788,129 @@ class _RepoPageState extends State<RepoPage> {
       return;
     }
     final toValue = end == headLabel ? 'HEAD' : end;
-    final res = await _git.changelogBetweenTags(widget.repoPath, start!, toValue!);
+    final fromValue = start!;
+    final toRef = toValue!;
+
     if (!mounted) return;
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const AlertDialog(
+        title: Text('Generating changelog'),
+        content: SizedBox(
+          width: 360,
+          child: Row(
+            children: [
+              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5)),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text('Fetching commits and waiting for Deepseek to organize...'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ));
+
+    String res = '';
+    bool aiOrganized = false;
+    try {
+      final raw = await _git.changelogBetweenTags(widget.repoPath, fromValue, toRef);
+      res = raw;
+      final polished = await _polishChangelogWithDeepseek(raw, fromRef: fromValue, toRef: toRef);
+      if (polished != null && polished.trim().isNotEmpty) {
+        res = polished;
+        aiOrganized = true;
+        _appendLog('Changelog organized by Deepseek.');
+      } else {
+        _appendLog('Deepseek changelog organizing unavailable, using raw changelog.');
+      }
+    } catch (e) {
+      _appendLog('Generate changelog failed: $e');
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Generate changelog failed'),
+            content: SelectableText(e.toString()),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Changelog'),
+        title: Text(aiOrganized ? 'Changelog (AI Organized)' : 'Changelog'),
         content: SizedBox(
           width: 520,
           height: 400,
           child: SingleChildScrollView(
-            child: SelectableText(res, style: const TextStyle(fontFamily: 'Consolas', fontSize: 13)),
+            child: SelectableText(
+              res,
+              style: const TextStyle(fontSize: 13, height: 1.35),
+            ),
           ),
         ),
         actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close'))],
       ),
     );
+  }
+
+  String? _extractDeepseekText(Map<String, dynamic> resp) {
+    String? content;
+    if (resp.containsKey('choices') && resp['choices'] is List && (resp['choices'] as List).isNotEmpty) {
+      final first = (resp['choices'] as List).first;
+      if (first is Map && first.containsKey('message')) {
+        final msg = first['message'];
+        if (msg is Map && msg['content'] is String) {
+          content = msg['content'] as String;
+        }
+      }
+      content ??= (first is Map && first['text'] is String) ? first['text'] as String : null;
+    }
+    content ??= resp['output']?.toString();
+    if (content == null) return null;
+    return content.trim();
+  }
+
+  Future<String?> _polishChangelogWithDeepseek(
+    String raw,
+    {required String fromRef, required String toRef}
+  ) async {
+    if (raw.trim().isEmpty) return null;
+
+    // Keep prompt size under control for large ranges.
+    final input = raw.length > 12000 ? '${raw.substring(0, 12000)}\n...[truncated]' : raw;
+    final prompt = '''You are a release note editor.
+
+Please rewrite the following raw git changelog into a clean, readable changelog for users.
+
+Range: $fromRef..$toRef
+
+Requirements:
+1. Output in Markdown only (no code fences).
+2. Use concise Chinese headings and bullet points.
+3. Group by categories when possible: Features, Fixes, Refactor, Performance, Tests, Docs, Others.
+4. Merge duplicated or very similar commit messages.
+5. Keep each bullet brief and action-focused; do not invent facts not present in input.
+6. Add a final section "原始提交" with short hash + subject lines (limit to 30 items).
+
+Raw changelog:
+$input''';
+
+    final resp = await _callDeepseek(prompt);
+    if (resp == null) return null;
+    final text = _extractDeepseekText(resp);
+    if (text == null || text.isEmpty) return null;
+    return text;
   }
 
   Future<void> _handleToolbarAction(String action) async {
@@ -1982,16 +2089,7 @@ ${buffers.join('\n\n---\n\n')}''';
       final resp = await _callDeepseek(prompt);
       if (resp == null) return;
 
-      String? content;
-      if (resp.containsKey('choices') && resp['choices'] is List && resp['choices'].isNotEmpty) {
-        final first = resp['choices'][0];
-        if (first is Map && first.containsKey('message')) {
-          final msg = first['message'];
-          if (msg is Map && msg.containsKey('content')) content = msg['content'] as String?;
-        }
-        content ??= (first is Map && first['text'] is String) ? first['text'] as String : null;
-      }
-      content ??= resp['output']?.toString();
+      final content = _extractDeepseekText(resp);
       if (content == null) {
         _appendLog('Deepseek returned no usable content.');
         return;
